@@ -1,5 +1,142 @@
-template-repository (1.0-1) unstable; urgency=medium
+poetry-core (1.4.0-4) unstable; urgency=medium
 
-  * Initial release
+  * d/patches: Add new patch to ensure that dist-info is written
+    deterministically and make the package reproducible (Closes: #1029296).
 
- -- Tsic404 <liuheng@deepin.org>  Sat, 28 Jan 2023 13:46:49 +0800
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sat, 21 Jan 2023 19:44:44 -0300
+
+poetry-core (1.4.0-3) unstable; urgency=medium
+
+  * d/control: Add Breaks for python3-cleo << 2.0.1-1.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Mon, 09 Jan 2023 23:41:25 -0300
+
+poetry-core (1.4.0-2) unstable; urgency=medium
+
+  * d/control Add Breaks for python3-poetry << 1.3.1+dfsg-1.
+    - Remove the Breaks for python3-cleo.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sun, 08 Jan 2023 11:12:38 -0300
+
+poetry-core (1.4.0-1) unstable; urgency=medium
+
+  * New upstream version.
+  * d/copyright: Add the tomlkit vendor package copyright entry-
+  * d/control: Bump Standards-Version to 4.6.2 (from 4.6.1.1; no further
+    changes).
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Fri, 06 Jan 2023 23:03:40 -0300
+
+poetry-core (1.3.2-3) unstable; urgency=medium
+
+  * d/control Add Breaks for python3-cleo << 1.0.0a5-3.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Wed, 07 Dec 2022 12:56:59 -0300
+
+poetry-core (1.3.2-2) unstable; urgency=medium
+
+   * d/control Add Breaks for python3-poetry << 1.2.2+dfsg-1.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Tue, 06 Dec 2022 14:50:50 -0300
+
+poetry-core (1.3.2-1) unstable; urgency=medium
+
+  * New upstream version.
+  * d/copyright: Update file for the last upstream version.
+    - Use expat license name instead of MIT.
+  * d/rules: Ignore test_version_is_synced test execution, this tests read the
+    pyproject.toml source file and fails.
+  * d/patches: Update patches.
+  * d/rules: Remove execute_after_dh_install target. Upstream set implicit
+    namespace package.
+  * d/tests/pytest: Copy pyproject.toml to AUTOPKGTEST_TMP folder to run
+    test_version_is_synced that is ignored during the build.
+  * d/control: Add python3-build as Build Depends, it is used for tests.
+    - d/tests/control: Also add python3-build as a Dependency for
+    autopkgtests.
+  * d/control: Remove trivial autopkgtest-pkg-python.
+  * d/control: Bump Standards-Version to 4.6.1.1 (from 4.6.1; no further
+    changes).
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Wed, 16 Nov 2022 12:26:21 -0300
+
+poetry-core (1.0.8-2) unstable; urgency=medium
+
+  * Team upload.
+  * debian/rules: Export PYBUILD_TEST_PYTEST=1. --test=pytest has no effect
+    when passed to dh.
+  * Build-Depend on python3-setuptools and Depend on it for autopkgtests.
+    It's no longer a transitive dependency of python3-virtualenv.
+
+ -- Stefano Rivera <stefanor@debian.org>  Fri, 16 Sep 2022 10:54:43 +0200
+
+poetry-core (1.0.8-1) unstable; urgency=medium
+
+  * New upstream version.
+  * debian/watch: change regex to remove alpha, beta and release candidate
+    from matched versions.
+  * d/control: Build with pybuild's pyproject plugin. Add
+    pybuild-plugin-pyproject as Build Depends.
+    - Use python3-poetry-core to build, add it to Build Depends.
+  * d/control: Bump Standards-Version to 4.6.1 (from 4.6.0.1). No changes
+    needed.
+  * d/copyright: Update Copyright year for debian/* files.
+  * d/patches: Remove 0001-Use-setup.py-from-Pypi.patch patch, it is not
+    longer need. Now, it use poetry to build.
+    - Rename 0002-Skip-test-that-fail-on-the-build.patch to
+    0001-Skip-test-that-fail-on-the-build.patch.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Sun, 17 Jul 2022 17:06:48 +0200
+
+poetry-core (1.0.7-2) unstable; urgency=medium
+
+  * d/tests/control: Add git to dependency for autopkgtest (Closes: #1000412).
+  * d/control: add nocheck profile for b-depends used in tests.
+  * d/copyright: remove a file that is not longer exist.
+  * d/upstream/metadata: remove unecessary whiteline.
+  * wrap-and-sort.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Tue, 23 Nov 2021 02:43:13 -0300
+
+poetry-core (1.0.7-1) unstable; urgency=medium
+
+  * New upstream release
+  * debian/control
+    - add git to b-d, needed by tests
+    - run wrap-and-sort
+    - bump Standards-Version to 4.6.0.1 (no changes needed)
+  * debian/patches/0001-Use-setup.py-from-Pypi.patch
+    - refresh setup.py (via poetry2setup)
+
+ -- Sandro Tosi <morph@debian.org>  Mon, 08 Nov 2021 22:58:14 -0500
+
+poetry-core (1.0.0-4) unstable; urgency=medium
+
+  * d/rules: Remove __init__.py package file to avoid that poetry
+    override this file.
+  * d/control: Add DPT as maintainer.
+    - Set me as uploaders.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Mon, 08 Nov 2021 00:31:59 -0300
+
+poetry-core (1.0.0-3) unstable; urgency=medium
+
+  [ Emmanuel Arias ]
+  * d/tests/control: add build-essentials package needed
+    for tests (Closes: #981533).
+
+ -- Sandro Tosi <morph@debian.org>  Tue, 11 May 2021 18:22:59 -0400
+
+poetry-core (1.0.0-2) unstable; urgency=medium
+
+  * Team upload.
+  * Source-only upload. No changes.
+
+ -- Louis-Philippe Véronneau <pollo@debian.org>  Wed, 20 Jan 2021 22:11:57 -0500
+
+poetry-core (1.0.0-1) unstable; urgency=low
+
+  [ Emmanuel Arias ]
+  * Initial release (Closes: #977483)
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Fri, 25 Dec 2020 17:52:58 -0500

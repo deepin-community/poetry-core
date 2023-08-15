@@ -1,0 +1,13 @@
+Tests: pytest
+Depends: build-essential,
+         git,
+         python3-all,
+         python3-all-dev,
+         python3-build,
+         python3-pep517,
+         python3-pytest,
+         python3-pytest-mock,
+         python3-setuptools,
+         python3-virtualenv,
+         @,
+Restrictions: allow-stderr
