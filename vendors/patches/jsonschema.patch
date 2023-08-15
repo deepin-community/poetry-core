@@ -1,0 +1,36 @@
+diff --git b/src/poetry/core/_vendor/jsonschema/_utils.py a/src/poetry/core/_vendor/jsonschema/_utils.py
+index a2ad5a9..d4f5697 100644
+--- b/src/poetry/core/_vendor/jsonschema/_utils.py
++++ a/src/poetry/core/_vendor/jsonschema/_utils.py
+@@ -2,15 +2,8 @@ from collections.abc import Mapping, MutableMapping, Sequence
+ from urllib.parse import urlsplit
+ import itertools
+ import json
++import os
+ import re
+-import sys
+-
+-# The files() API was added in Python 3.9.
+-if sys.version_info >= (3, 9):  # pragma: no cover
+-    from importlib import resources
+-else:  # pragma: no cover
+-    import importlib_resources as resources  # type: ignore
+-
+ 
+ class URIDict(MutableMapping):
+     """
+@@ -56,9 +49,12 @@ def load_schema(name):
+     """
+     Load a schema from ./schemas/``name``.json and return it.
+     """
++    with open(
++        os.path.join(os.path.dirname(__file__), "schemas", "{0}.json".format(name)),
++        encoding="utf-8"
++    ) as f:
++        data = f.read()
+ 
+-    path = resources.files(__package__).joinpath(f"schemas/{name}.json")
+-    data = path.read_text(encoding="utf-8")
+     return json.loads(data)
+ 
+ 
