@@ -287,6 +287,7 @@ def test_equality() -> None:
 def test_allows() -> None:
     v = Version.parse("1.2.3")
     assert v.allows(v)
+    assert not v.allows(Version.parse("1.2"))
     assert not v.allows(Version.parse("2.2.3"))
     assert not v.allows(Version.parse("1.3.3"))
     assert not v.allows(Version.parse("1.2.4"))
@@ -294,6 +295,33 @@ def test_allows() -> None:
     assert not v.allows(Version.parse("1.2.3-1"))
     assert not v.allows(Version.parse("1.2.3-1+build"))
     assert v.allows(Version.parse("1.2.3+build"))
+
+
+@pytest.mark.parametrize(
+    ("version1", "version2"),
+    [
+        ("1", "1.0"),
+        ("1", "1.0.0"),
+        ("1", "1.0.0.0"),
+        ("1.2", "1.2.0"),
+        ("1.2", "1.2.0.0"),
+        ("1.2", "1.2.0.0.0"),
+        ("1.2.3", "1.2.3.0"),
+        ("1.2.3", "1.2.3.0.0"),
+        ("1.2.3.4", "1.2.3.4.0"),
+        ("1.2.3.4", "1.2.3.4.0.0"),
+        ("1.2.3.4a1", "1.2.3.4.0a1"),
+    ],
+)
+def test_allows_zero_padding(version1: str, version2: str) -> None:
+    v1 = Version.parse(version1)
+    v2 = Version.parse(version2)
+    assert v1.allows(v2)
+    assert v2.allows(v1)
+    assert v1.allows_all(v2)
+    assert v2.allows_all(v1)
+    assert v1.allows_any(v2)
+    assert v2.allows_any(v1)
 
 
 def test_allows_with_local() -> None:
@@ -347,9 +375,14 @@ def test_allows_all() -> None:
             True,
         ),
         (
+            Version.parse("1.2.3"),
+            VersionRange(Version.parse("1.2.3+local"), include_min=True),
+            True,
+        ),
+        (
             Version.parse("1.2.3+cpu"),
             Version.parse("1.2.3"),
-            False,
+            True,
         ),
         (
             Version.parse("1.2.3"),
@@ -409,6 +442,16 @@ def test_allows_any(
             Version.parse("1.2.3"),
             Version.parse("1.2.3+local"),
             Version.parse("1.2.3+local"),
+        ),
+        (
+            Version.parse("1.2.3"),
+            VersionRange(Version.parse("1.2.3+local"), include_min=True),
+            VersionRange(
+                Version.parse("1.2.3+local"),
+                Version.parse("1.2.4"),
+                include_min=True,
+                include_max=False,
+            ),
         ),
     ],
 )
@@ -527,3 +570,21 @@ def test_difference() -> None:
 )
 def test_to_string_normalizes(version: str, normalized_version: str) -> None:
     assert Version.parse(version).to_string() == normalized_version
+
+
+@pytest.mark.parametrize(
+    "unsorted, sorted_",
+    [
+        (["1.0.3", "1.0.2", "1.0.1"], ["1.0.1", "1.0.2", "1.0.3"]),
+        (["1.0.0.2", "1.0.0.0rc2"], ["1.0.0.0rc2", "1.0.0.2"]),
+        (["1.0.0.0", "1.0.0.0rc2"], ["1.0.0.0rc2", "1.0.0.0"]),
+        (["1.0.0.0.0", "1.0.0.0rc2"], ["1.0.0.0rc2", "1.0.0.0.0"]),
+        (["1.0.0rc2", "1.0.0rc1"], ["1.0.0rc1", "1.0.0rc2"]),
+        (["1.0.0rc2", "1.0.0b1"], ["1.0.0b1", "1.0.0rc2"]),
+    ],
+)
+def test_versions_are_sortable(unsorted: list[str], sorted_: list[str]) -> None:
+    unsorted_parsed = [Version.parse(u) for u in unsorted]
+    sorted_parsed = [Version.parse(s) for s in sorted_]
+
+    assert sorted(unsorted_parsed) == sorted_parsed

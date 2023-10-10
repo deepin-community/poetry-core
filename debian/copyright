@@ -7,10 +7,6 @@ Files: *
 Copyright: Sébastien Eustace <sebastien@eustace.io>
 License: expat
 
-Files: src/poetry/core/_vendor/pyparsing/*
-Copyright: 2003-2022  Paul T. McGuire
-License: expat
-
 Files: src/poetry/core/_vendor/lark/*
 Copyright: 2017 Erez Shinan
 License: expat
@@ -33,7 +29,7 @@ Copyright: 2014-2019 Donald Stufft and individual contributors.
 License: BSD-2-Clause or Apache-2.0
 
 Files: debian/*
-Copyright: 2020-2022 Emmanuel Arias <eamanu@yaerobi.com>
+Copyright: 2020-2023 Emmanuel Arias <eamanu@debian.org>
 License: expat
 
 Files: src/poetry/core/_vendor/typing_extensions.py
@@ -42,10 +38,6 @@ License: Python
 
 Files: src/poetry/core/_vendor/jsonschema/*
 Copyright: 2013 Julian Berman
-License: expat
-
-Files: src/poetry/core/_vendor/tomlkit/*
-Copyright: 2018 Sébastien Eustace
 License: expat
 
 License: expat

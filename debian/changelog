@@ -1,3 +1,43 @@
+poetry-core (1.7.0-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Emmanuel Arias <eamanu@debian.org>  Sat, 02 Sep 2023 14:21:05 -0300
+
+poetry-core (1.6.1-2) unstable; urgency=medium
+
+  * d/control: Update Breaks for poetry << 1.5.1+dfsg-3 (from 1.5.1+dfsg-1).
+
+ -- Emmanuel Arias <eamanu@debian.org>  Tue, 22 Aug 2023 21:19:52 -0300
+
+poetry-core (1.6.1-1) unstable; urgency=medium
+
+  * Migrate new upstream version from testing.
+  * d/control: Update my contact information in Uploaders key.
+    - d/copyrignt: Update my contact information in debian/* files copyright.
+  * d/control: Update Breaks for poetry << 1.5.1+dfsg-1 (from 1.3.1+dfsg-1).
+
+ -- Emmanuel Arias <eamanu@debian.org>  Mon, 07 Aug 2023 17:30:55 -0300
+
+poetry-core (1.6.1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * d/patches/0001-Skip-test-that-fail-on-the-build.patch: Update patch
+    to be according to the new upstream release code.
+    - d/patches/0002-Ensure-dist-info-is-written-deterministically.patch remove
+      patch. It is already applied for upstream.
+  * d/control: Add python3-tomli-w as D-Depends. Also add it in
+    d/tests/control file.
+  * d/copyright: Update Copyright year for debian/* files.
+  * d/control: Remove python3-pep517 from B-Dedepends, it is no longer needed.
+    Also, remove it from d/tests/control.
+  * d/copyright: Remove entry for src/poetry/core/_vendor/pyparsing/* files. It
+    is not longer in upstream code.
+    - Remove entry for src/poetry/core/_vendor/tomlkit/* files it was replaced by
+      tomli-w.
+
+ -- Emmanuel Arias <eamanu@yaerobi.com>  Fri, 30 Jun 2023 00:08:47 -0300
+
 poetry-core (1.4.0-4) unstable; urgency=medium
 
   * d/patches: Add new patch to ensure that dist-info is written
