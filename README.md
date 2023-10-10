@@ -1,4 +1,5 @@
 # Poetry Core
+[![Poetry](https://img.shields.io/endpoint?url=https://python-poetry.org/badge/v0.json)](https://python-poetry.org/)
 [![PyPI version](https://img.shields.io/pypi/v/poetry-core)](https://pypi.org/project/poetry-core/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/poetry-core)](https://pypi.org/project/poetry-core/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -41,5 +42,5 @@ dependencies are not required when the objective is to simply build either a sou
 project.
 
 In order to improve the above situation, `poetry-core` was created. Shared functionality pertaining to PEP 517 build
-backends, including reading lock file, `pyproject.toml` and building wheel/sdist, were implemented in this package. This
+backends, including reading `pyproject.toml` and building wheel/sdist, were implemented in this package. This
 makes PEP 517 builds extremely fast for Poetry managed packages.

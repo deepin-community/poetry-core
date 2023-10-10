@@ -6,6 +6,7 @@ import pytest
 
 from poetry.core.constraints.generic import parse_constraint as parse_generic_constraint
 from poetry.core.constraints.version import parse_constraint as parse_version_constraint
+from poetry.core.constraints.version import parse_marker_version_constraint
 from poetry.core.packages.utils.utils import convert_markers
 from poetry.core.packages.utils.utils import create_nested_marker
 from poetry.core.packages.utils.utils import get_python_constraint_from_marker
@@ -212,6 +213,8 @@ def test_create_nested_marker_version_constraint(
         ),
         # no python_version
         ('sys_platform == "linux"', "*"),
+        ('sys_platform != "linux" and sys_platform != "win32"', "*"),
+        ('sys_platform == "linux" or sys_platform == "win32"', "*"),
         # no relevant python_version
         ('python_version >= "3.9" or sys_platform == "linux"', "*"),
         # relevant python_version
@@ -230,7 +233,7 @@ def test_create_nested_marker_version_constraint(
 )
 def test_get_python_constraint_from_marker(marker: str, constraint: str) -> None:
     marker_parsed = parse_marker(marker)
-    constraint_parsed = parse_version_constraint(constraint)
+    constraint_parsed = parse_marker_version_constraint(constraint)
     assert get_python_constraint_from_marker(marker_parsed) == constraint_parsed
 
 

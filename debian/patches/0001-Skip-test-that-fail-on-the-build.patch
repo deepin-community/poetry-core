@@ -12,30 +12,22 @@ decided skip the test to try add poetry package into Debian.
 
 Index: poetry-core/tests/masonry/builders/test_complete.py
 ===================================================================
---- poetry-core.orig/tests/masonry/builders/test_complete.py	2022-11-16 12:44:43.703410061 -0300
-+++ poetry-core/tests/masonry/builders/test_complete.py	2022-11-16 12:44:43.703410061 -0300
-@@ -42,7 +42,7 @@
+--- poetry-core.orig/tests/masonry/builders/test_complete.py	2023-07-01 20:19:58.959349780 -0300
++++ poetry-core/tests/masonry/builders/test_complete.py	2023-07-01 20:19:58.899348970 -0300
+@@ -41,7 +41,7 @@
          if dist.is_dir():
              shutil.rmtree(str(dist))
  
 -
 +@pytest.mark.skip("Skip test. Fail on sbuild.")
  @pytest.mark.skipif(
-     sys.platform == "win32"
-     and sys.version_info <= (3, 6)
-@@ -153,6 +153,7 @@
-         zip.close()
- 
- 
-+@pytest.mark.skip("Skip test. Fail on sbuild.")
- @pytest.mark.skipif(
-     sys.platform == "win32"
-     and sys.version_info <= (3, 6)
+     platform.python_implementation().lower() == "pypy", reason="Disable test for PyPy"
+ )
 Index: poetry-core/tests/masonry/builders/test_sdist.py
 ===================================================================
---- poetry-core.orig/tests/masonry/builders/test_sdist.py	2022-11-16 12:44:43.703410061 -0300
-+++ poetry-core/tests/masonry/builders/test_sdist.py	2022-11-16 12:46:55.656958991 -0300
-@@ -422,6 +422,7 @@
+--- poetry-core.orig/tests/masonry/builders/test_sdist.py	2023-07-01 20:19:58.959349780 -0300
++++ poetry-core/tests/masonry/builders/test_sdist.py	2023-07-01 20:19:58.899348970 -0300
+@@ -436,6 +436,7 @@
          assert "package_src-0.1/src/package_src/module.py" in tar.getnames()
  
  
@@ -45,9 +37,9 @@ Index: poetry-core/tests/masonry/builders/test_sdist.py
          def get_ignored_files(self, folder: Path | None = None) -> list[str]:
 Index: poetry-core/tests/masonry/builders/test_wheel.py
 ===================================================================
---- poetry-core.orig/tests/masonry/builders/test_wheel.py	2022-11-16 12:44:43.703410061 -0300
-+++ poetry-core/tests/masonry/builders/test_wheel.py	2022-11-16 12:46:07.280391104 -0300
-@@ -282,7 +282,7 @@
+--- poetry-core.orig/tests/masonry/builders/test_wheel.py	2023-07-01 20:19:58.959349780 -0300
++++ poetry-core/tests/masonry/builders/test_wheel.py	2023-07-01 20:19:58.903349023 -0300
+@@ -286,7 +286,7 @@
          records = z.read("comma_file-1.2.3.dist-info/RECORD")
          assert '\n"comma_file/a,b.py"' in records.decode()
  

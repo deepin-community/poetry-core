@@ -12,6 +12,7 @@ from poetry.core.version.markers import SingleMarker
 
 
 if TYPE_CHECKING:
+    from _pytest.logging import LogCaptureFixture
     from pytest_mock import MockerFixture
 
     from poetry.core.version.markers import BaseMarker
@@ -20,21 +21,46 @@ DIST_PATH = Path(__file__).parent.parent / "fixtures" / "distributions"
 TEST_FILE = "demo-0.1.0.tar.gz"
 
 
-def test_file_dependency_wrong_path() -> None:
-    with pytest.raises(ValueError):
-        FileDependency("demo", DIST_PATH / "demo-0.2.0.tar.gz")
+def test_file_dependency_does_not_exist(
+    caplog: LogCaptureFixture, mocker: MockerFixture
+) -> None:
+    mock_exists = mocker.patch.object(Path, "exists")
+    mock_exists.return_value = False
+    dep = FileDependency("demo", DIST_PATH / "demo-0.2.0.tar.gz")
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelname == "WARNING"
+    assert "does not exist" in record.message
+
+    with pytest.raises(ValueError, match="does not exist"):
+        dep.validate(raise_error=True)
+
+    mock_exists.assert_called_once()
 
 
-def test_file_dependency_dir() -> None:
-    with pytest.raises(ValueError):
-        FileDependency("demo", DIST_PATH)
+def test_file_dependency_is_directory(
+    caplog: LogCaptureFixture, mocker: MockerFixture
+) -> None:
+    mock_is_directory = mocker.patch.object(Path, "is_dir")
+    mock_is_directory.return_value = True
+    dep = FileDependency("demo", DIST_PATH)
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelname == "WARNING"
+    assert "is a directory" in record.message
+
+    with pytest.raises(ValueError, match="is a directory"):
+        dep.validate(raise_error=True)
+
+    mock_is_directory.assert_called_once()
 
 
 def test_default_hash() -> None:
-    path = DIST_PATH / TEST_FILE
-    dep = FileDependency("demo", path)
-    sha_256 = "72e8531e49038c5f9c4a837b088bfcb8011f4a9f76335c8f0654df6ac539b3d6"
-    assert dep.hash() == sha_256
+    with pytest.warns(DeprecationWarning):
+        path = DIST_PATH / TEST_FILE
+        dep = FileDependency("demo", path)
+        sha_256 = "72e8531e49038c5f9c4a837b088bfcb8011f4a9f76335c8f0654df6ac539b3d6"
+        assert dep.hash() == sha_256
 
 
 try:
@@ -88,9 +114,10 @@ except ImportError:
     ],
 )
 def test_guaranteed_hash(hash_name: str, expected: str) -> None:
-    path = DIST_PATH / TEST_FILE
-    dep = FileDependency("demo", path)
-    assert dep.hash(hash_name) == expected
+    with pytest.warns(DeprecationWarning):
+        path = DIST_PATH / TEST_FILE
+        dep = FileDependency("demo", path)
+        assert dep.hash(hash_name) == expected
 
 
 def _test_file_dependency_pep_508(
@@ -150,7 +177,15 @@ def test_file_dependency_pep_508_local_file_relative_path(
     _test_file_dependency_pep_508(mocker, "demo", path, requirement, expected)
 
 
-def test_absolute_file_dependency_to_pep_508_with_marker(mocker: MockerFixture) -> None:
+def test_file_dependency_pep_508_with_subdirectory(mocker: MockerFixture) -> None:
+    path = DIST_PATH / "demo.zip"
+    expected = f"demo @ {path.as_uri()}#subdirectory=sub"
+
+    requirement = f"demo @ file://{path.as_posix()}#subdirectory=sub"
+    _test_file_dependency_pep_508(mocker, "demo", path, requirement, expected)
+
+
+def test_to_pep_508_with_marker(mocker: MockerFixture) -> None:
     wheel = "demo-0.1.0-py2.py3-none-any.whl"
 
     abs_path = DIST_PATH / wheel

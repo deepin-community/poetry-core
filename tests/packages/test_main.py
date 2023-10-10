@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from typing import cast
 
+import pytest
+
 from poetry.core.constraints.version import Version
 from poetry.core.packages.dependency import Dependency
 
@@ -41,7 +43,7 @@ def test_dependency_from_pep_508_with_constraint() -> None:
     dep = Dependency.create_from_pep_508(name)
 
     assert dep.name == "requests"
-    assert str(dep.constraint) == ">=2.12.0,<2.17.0 || >=2.18.0,<3.0"
+    assert str(dep.constraint) == ">=2.12.0,<2.17.dev0 || >=2.18.dev0,<3.0"
 
 
 def test_dependency_from_pep_508_with_extras() -> None:
@@ -108,33 +110,39 @@ def test_dependency_from_pep_508_complex() -> None:
     )
 
 
-def test_dependency_python_version_in() -> None:
-    name = "requests (==2.18.0); python_version in '3.3 3.4 3.5'"
+@pytest.mark.parametrize(
+    "marker_value",
+    [
+        "3.3 3.4 3.5",  # space
+        "3.3, 3.4, 3.5",  # comma
+        "3.3|3.4|3.5",  # pipe
+    ],
+)
+def test_dependency_python_version_in_(marker_value: str) -> None:
+    name = f"requests (==2.18.0); python_version in '{marker_value}'"
     dep = Dependency.create_from_pep_508(name)
 
     assert dep.name == "requests"
     assert str(dep.constraint) == "2.18.0"
     assert dep.python_versions == "3.3.* || 3.4.* || 3.5.*"
-    assert str(dep.marker) == 'python_version in "3.3 3.4 3.5"'
+    assert str(dep.marker) == f'python_version in "{marker_value}"'
 
 
-def test_dependency_python_version_in_comma() -> None:
-    name = "requests (==2.18.0); python_version in '3.3, 3.4, 3.5'"
+@pytest.mark.parametrize(
+    "marker_value",
+    [
+        "win32 darwin",  # space
+        "win32, darwin",  # comma
+        "win32|darwin",  # pipe
+    ],
+)
+def test_dependency_platform_in(marker_value: str) -> None:
+    name = f"requests (==2.18.0); sys_platform in '{marker_value}'"
     dep = Dependency.create_from_pep_508(name)
 
     assert dep.name == "requests"
     assert str(dep.constraint) == "2.18.0"
-    assert dep.python_versions == "3.3.* || 3.4.* || 3.5.*"
-    assert str(dep.marker) == 'python_version in "3.3, 3.4, 3.5"'
-
-
-def test_dependency_platform_in() -> None:
-    name = "requests (==2.18.0); sys_platform in 'win32 darwin'"
-    dep = Dependency.create_from_pep_508(name)
-
-    assert dep.name == "requests"
-    assert str(dep.constraint) == "2.18.0"
-    assert str(dep.marker) == 'sys_platform in "win32 darwin"'
+    assert str(dep.marker) == f'sys_platform in "{marker_value}"'
 
 
 def test_dependency_with_extra() -> None:
@@ -278,15 +286,15 @@ def test_dependency_from_pep_508_with_python_full_version() -> None:
     assert dep.name == "requests"
     assert str(dep.constraint) == "2.18.0"
     assert dep.extras == frozenset()
-    assert dep.python_versions == ">=2.7 <2.8 || >=3.4 <3.5.4"
+    assert dep.python_versions == ">=2.7 <2.8 || >=3.4.0 <3.5.4"
     assert (
         str(dep.marker)
         == 'python_version >= "2.7" and python_version < "2.8" '
-        'or python_full_version >= "3.4" and python_full_version < "3.5.4"'
+        'or python_full_version >= "3.4.0" and python_full_version < "3.5.4"'
     )
 
 
-def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_release_astrix() -> (
+def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_release_astrix() -> (  # noqa: E501
     None
 ):
     name = 'pathlib2 ; python_version == "3.4.*" or python_version < "3"'
@@ -297,7 +305,7 @@ def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_rele
     assert dep.python_versions == "==3.4.* || <3"
 
 
-def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_release_tilde() -> (
+def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_release_tilde() -> (  # noqa: E501
     None
 ):
     name = 'pathlib2 ; python_version ~= "3.4" or python_version < "3"'
@@ -308,7 +316,7 @@ def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_rele
     assert dep.python_versions == "~=3.4 || <3"
 
 
-def test_dependency_from_pep_508_should_not_produce_empty_constraints_for_correct_markers() -> (
+def test_dependency_from_pep_508_should_not_produce_empty_constraints_for_correct_markers() -> (  # noqa: E501
     None
 ):
     name = (
