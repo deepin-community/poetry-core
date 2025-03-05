@@ -10,11 +10,9 @@ decided skip the test to try add poetry package into Debian.
  tests/masonry/builders/test_wheel.py    | 1 +
  3 files changed, 4 insertions(+), 1 deletion(-)
 
-Index: poetry-core/tests/masonry/builders/test_complete.py
-===================================================================
---- poetry-core.orig/tests/masonry/builders/test_complete.py	2023-07-01 20:19:58.959349780 -0300
-+++ poetry-core/tests/masonry/builders/test_complete.py	2023-07-01 20:19:58.899348970 -0300
-@@ -41,7 +41,7 @@
+--- a/tests/masonry/builders/test_complete.py
++++ b/tests/masonry/builders/test_complete.py
+@@ -43,7 +43,7 @@
          if dist.is_dir():
              shutil.rmtree(str(dist))
  
@@ -23,28 +21,24 @@ Index: poetry-core/tests/masonry/builders/test_complete.py
  @pytest.mark.skipif(
      platform.python_implementation().lower() == "pypy", reason="Disable test for PyPy"
  )
-Index: poetry-core/tests/masonry/builders/test_sdist.py
-===================================================================
---- poetry-core.orig/tests/masonry/builders/test_sdist.py	2023-07-01 20:19:58.959349780 -0300
-+++ poetry-core/tests/masonry/builders/test_sdist.py	2023-07-01 20:19:58.899348970 -0300
-@@ -436,6 +436,7 @@
+--- a/tests/masonry/builders/test_sdist.py
++++ b/tests/masonry/builders/test_sdist.py
+@@ -484,6 +484,7 @@
          assert "package_src-0.1/src/package_src/module.py" in tar.getnames()
  
  
 +@pytest.mark.skip("Skip test. Fail on sbuild.")
  def test_default_with_excluded_data(mocker: MockerFixture) -> None:
-     class MockGit:
-         def get_ignored_files(self, folder: Path | None = None) -> list[str]:
-Index: poetry-core/tests/masonry/builders/test_wheel.py
-===================================================================
---- poetry-core.orig/tests/masonry/builders/test_wheel.py	2023-07-01 20:19:58.959349780 -0300
-+++ poetry-core/tests/masonry/builders/test_wheel.py	2023-07-01 20:19:58.903349023 -0300
-@@ -286,7 +286,7 @@
+     mocker.patch(
+         "poetry.core.vcs.git.Git.get_ignored_files",
+--- a/tests/masonry/builders/test_wheel.py
++++ b/tests/masonry/builders/test_wheel.py
+@@ -368,7 +368,7 @@
          records = z.read("comma_file-1.2.3.dist-info/RECORD")
          assert '\n"comma_file/a,b.py"' in records.decode()
  
 -
 +@pytest.mark.skip("Skip test. Fail on sbuild.")
  def test_default_src_with_excluded_data(mocker: MockerFixture) -> None:
-     class MockGit:
-         def get_ignored_files(self, folder: Path | None = None) -> list[str]:
+     mocker.patch(
+         "poetry.core.vcs.git.Git.get_ignored_files",

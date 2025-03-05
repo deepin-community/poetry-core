@@ -158,7 +158,11 @@ class Transformer(_Decoratable, ABC, Generic[_Leaf_T, _Return_T]):
 
     def transform(self, tree: Tree[_Leaf_T]) -> _Return_T:
         "Transform the given tree, and return the final result"
-        return self._transform_tree(tree)
+        res = list(self._transform_children([tree]))
+        if not res:
+            return None     # type: ignore[return-value]
+        assert len(res) == 1
+        return res[0]
 
     def __mul__(
             self: 'Transformer[_Leaf_T, Tree[_Leaf_U]]',
@@ -267,7 +271,7 @@ class TransformerChain(Generic[_Leaf_T, _Return_T]):
         return TransformerChain(*self.transformers + (other,))
 
 
-class Transformer_InPlace(Transformer):
+class Transformer_InPlace(Transformer[_Leaf_T, _Return_T]):
     """Same as Transformer, but non-recursive, and changes the tree in-place instead of returning new instances
 
     Useful for huge trees. Conservative in memory.
@@ -282,7 +286,7 @@ class Transformer_InPlace(Transformer):
         return self._transform_tree(tree)
 
 
-class Transformer_NonRecursive(Transformer):
+class Transformer_NonRecursive(Transformer[_Leaf_T, _Return_T]):
     """Same as Transformer but non-recursive.
 
     Like Transformer, it doesn't change the original tree.
@@ -470,8 +474,7 @@ class _VArgsWrapper:
     def __init__(self, func: Callable, visit_wrapper: Callable[[Callable, str, list, Any], Any]):
         if isinstance(func, _VArgsWrapper):
             func = func.base_func
-        # https://github.com/python/mypy/issues/708
-        self.base_func = func  # type: ignore[assignment]
+        self.base_func = func
         self.visit_wrapper = visit_wrapper
         update_wrapper(self, func)
 

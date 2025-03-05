@@ -6,14 +6,16 @@ import warnings
 
 from lark.exceptions import UnexpectedToken
 from lark.lexer import Token, LexerThread
+from .lalr_parser_state import ParserState
 
+###{standalone
 
 class InteractiveParser:
     """InteractiveParser gives you advanced control over parsing and error handling when parsing with LALR.
 
     For a simpler interface, see the ``on_error`` argument to ``Lark.parse()``.
     """
-    def __init__(self, parser, parser_state, lexer_thread: LexerThread):
+    def __init__(self, parser, parser_state: ParserState, lexer_thread: LexerThread):
         self.parser = parser
         self.parser_state = parser_state
         self.lexer_thread = lexer_thread
@@ -62,14 +64,14 @@ class InteractiveParser:
 
         Calls to feed_token() won't affect the old instance, and vice-versa.
         """
+        return self.copy()
+
+    def copy(self, deepcopy_values=True):
         return type(self)(
             self.parser,
-            copy(self.parser_state),
+            self.parser_state.copy(deepcopy_values=deepcopy_values),
             copy(self.lexer_thread),
         )
-
-    def copy(self):
-        return copy(self)
 
     def __eq__(self, other):
         if not isinstance(other, InteractiveParser):
@@ -102,9 +104,14 @@ class InteractiveParser:
     def accepts(self):
         """Returns the set of possible tokens that will advance the parser into a new valid state."""
         accepts = set()
+        conf_no_callbacks = copy(self.parser_state.parse_conf)
+        # We don't want to call callbacks here since those might have arbitrary side effects
+        # and are unnecessarily slow.
+        conf_no_callbacks.callbacks = {}
         for t in self.choices():
             if t.isupper(): # is terminal?
-                new_cursor = copy(self)
+                new_cursor = self.copy(deepcopy_values=False)
+                new_cursor.parser_state.parse_conf = conf_no_callbacks
                 try:
                     new_cursor.feed_token(self.lexer_thread._Token(t, ''))
                 except UnexpectedToken:
@@ -147,3 +154,5 @@ class ImmutableInteractiveParser(InteractiveParser):
         """Convert to an ``InteractiveParser``."""
         p = copy(self)
         return InteractiveParser(p.parser, p.parser_state, p.lexer_thread)
+
+###}

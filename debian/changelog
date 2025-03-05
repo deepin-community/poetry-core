@@ -1,3 +1,65 @@
+poetry-core (2.0.1-2) unstable; urgency=medium
+
+  * d/tests/control: Add python3-trove-classifiers as Depends.
+  * d/tests/pytest: Remove SOURCE_DATE_EPOCH variable definition.
+
+ -- Emmanuel Arias <eamanu@debian.org>  Mon, 20 Jan 2025 10:37:32 -0300
+
+poetry-core (2.0.1-1) unstable; urgency=medium
+
+  * New upstream version.
+  * d/patches: Remove remove-parametrize-test.patch patch it's already
+    implemented by upstream.
+    - Update 0001-Skip-test-that-fail-on-the-build.patch according to new
+    upstream release.
+  * d/patches/fix-broken-tests.patch: Add patch to fix broken tests.
+  * d/control: Add python3-trove-classifiers as Build Dependency.
+  * d/patches/update-test-to-avoid-error.patch: Add patch to set
+    SOURCE_DATE_EPOCH during test execution time.
+
+ -- Emmanuel Arias <eamanu@debian.org>  Wed, 15 Jan 2025 18:07:55 -0300
+
+poetry-core (1.9.0-2) unstable; urgency=medium
+
+  * d/control: Add patch to remove test that fail with
+    python3.12.6 (Closes: #1081311).
+  * d/control: Bump Standards-Version to 4.7.0 (from 4.6.2; no further changes
+    needed).
+
+ -- Emmanuel Arias <eamanu@debian.org>  Fri, 13 Sep 2024 09:24:35 -0300
+
+poetry-core (1.9.0-1) unstable; urgency=medium
+
+  * d/salsa-ci.yml: Deactivate SALSA_CI_DISABLE_REVERSE_DEPENDENCIES
+    variable to build reverse dependencies.
+  * Upload to unstable.
+
+ -- Emmanuel Arias <eamanu@debian.org>  Fri, 23 Feb 2024 22:57:12 -0300
+
+poetry-core (1.9.0-1~exp1) experimental; urgency=medium
+
+  * New upstream version.
+  * d/rules: Stop removing *extended* files from tests, to avoid fail
+    in rebuilds (Closes: #1049669).
+
+ -- Emmanuel Arias <eamanu@debian.org>  Sat, 17 Feb 2024 13:25:10 -0300
+
+poetry-core (1.8.1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * d/control: Update Breaks for python3-poetry to << 1.7.0+dfsg-1.
+  * d/copyright: Remove copyright entry for jsonschema and replace it by
+    fastjsonschema.
+  * d/copyright: Remove copyright entry for:
+    - src/poetry/core/_vendor/attrs/*
+    - src/poetry/core/_vendor/attr/*
+    - src/poetry/core/_vendor/pyrsistent/_toolz.py
+    - src/poetry/core/_vendor/pyrsistent/*
+    - src/poetry/core/_vendor/typing_extensions.py
+    They are not longer vendored by upstream.
+
+ -- Emmanuel Arias <eamanu@debian.org>  Fri, 10 Nov 2023 18:38:14 -0300
+
 poetry-core (1.7.0-1) unstable; urgency=medium
 
   * New upstream release.

@@ -9,20 +9,19 @@ The Earley parser outputs an SPPF-tree as per that document. The SPPF tree forma
 is explained here: https://lark-parser.readthedocs.io/en/latest/_static/sppf/sppf.html
 """
 
-import typing
-
+from typing import TYPE_CHECKING, Callable, Optional, List, Any
 from collections import deque
 
 from ..lexer import Token
 from ..tree import Tree
 from ..exceptions import UnexpectedEOF, UnexpectedToken
-from ..utils import logger
+from ..utils import logger, OrderedSet, dedup_list
 from .grammar_analysis import GrammarAnalyzer
 from ..grammar import NonTerminal
 from .earley_common import Item
-from .earley_forest import ForestSumVisitor, SymbolNode, TokenNode, ForestToParseTree
+from .earley_forest import ForestSumVisitor, SymbolNode, StableSymbolNode, TokenNode, ForestToParseTree
 
-if typing.TYPE_CHECKING:
+if TYPE_CHECKING:
     from ..common import LexerConf, ParserConf
 
 class Parser:
@@ -30,13 +29,17 @@ class Parser:
     parser_conf: 'ParserConf'
     debug: bool
 
-    def __init__(self, lexer_conf: 'LexerConf', parser_conf: 'ParserConf', term_matcher, resolve_ambiguity=True, debug=False, tree_class=Tree):
+    def __init__(self, lexer_conf: 'LexerConf', parser_conf: 'ParserConf', term_matcher: Callable,
+                 resolve_ambiguity: bool=True, debug: bool=False,
+                 tree_class: Optional[Callable[[str, List], Any]]=Tree, ordered_sets: bool=True):
         analysis = GrammarAnalyzer(parser_conf)
         self.lexer_conf = lexer_conf
         self.parser_conf = parser_conf
         self.resolve_ambiguity = resolve_ambiguity
         self.debug = debug
-        self.tree_class = tree_class
+        self.Tree = tree_class
+        self.Set = OrderedSet if ordered_sets else set
+        self.SymbolNode = StableSymbolNode if ordered_sets else SymbolNode
 
         self.FIRST = analysis.FIRST
         self.NULLABLE = analysis.NULLABLE
@@ -94,7 +97,7 @@ class Parser:
             if item.is_complete:   ### (item.s == string)
                 if item.node is None:
                     label = (item.s, item.start, i)
-                    item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, SymbolNode(*label))
+                    item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, self.SymbolNode(*label))
                     item.node.add_family(item.s, item.rule, item.start, None, None)
 
                 # create_leo_transitives(item.rule.origin, item.start)
@@ -109,7 +112,7 @@ class Parser:
 
                     new_item = Item(transitive.rule, transitive.ptr, transitive.start)
                     label = (root_transitive.s, root_transitive.start, i)
-                    new_item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, SymbolNode(*label))
+                    new_item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, self.SymbolNode(*label))
                     new_item.node.add_path(root_transitive, item.node)
                     if new_item.expect in self.TERMINALS:
                         # Add (B :: aC.B, h, y) to Q
@@ -133,7 +136,7 @@ class Parser:
                     for originator in originators:
                         new_item = originator.advance()
                         label = (new_item.s, originator.start, i)
-                        new_item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, SymbolNode(*label))
+                        new_item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, self.SymbolNode(*label))
                         new_item.node.add_family(new_item.s, new_item.rule, i, originator.node, item.node)
                         if new_item.expect in self.TERMINALS:
                             # Add (B :: aC.B, h, y) to Q
@@ -154,7 +157,7 @@ class Parser:
                 if item.expect in held_completions:
                     new_item = item.advance()
                     label = (new_item.s, item.start, i)
-                    new_item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, SymbolNode(*label))
+                    new_item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, self.SymbolNode(*label))
                     new_item.node.add_family(new_item.s, new_item.rule, new_item.start, item.node, held_completions[item.expect])
                     new_items.append(new_item)
 
@@ -166,6 +169,7 @@ class Parser:
                         items.append(new_item)
 
     def _parse(self, lexer, columns, to_scan, start_symbol=None):
+
         def is_quasi_complete(item):
             if item.is_complete:
                 return True
@@ -190,13 +194,13 @@ class Parser:
             Earley predictor, based on the previously completed tokens.
             This ensures that at each phase of the parse we have a custom
             lexer context, allowing for more complex ambiguities."""
-            next_to_scan = set()
-            next_set = set()
+            next_to_scan = self.Set()
+            next_set = self.Set()
             columns.append(next_set)
             transitives.append({})
             node_cache = {}
 
-            for item in set(to_scan):
+            for item in self.Set(to_scan):
                 if match(item.expect, token):
                     new_item = item.advance()
                     label = (new_item.s, new_item.start, i)
@@ -209,7 +213,7 @@ class Parser:
                     # ForestSumVisitor after the basic lexer has already
                     # "used up" the terminal priorities
                     token_node = TokenNode(token, term, priority=0)
-                    new_item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, SymbolNode(*label))
+                    new_item.node = node_cache[label] if label in node_cache else node_cache.setdefault(label, self.SymbolNode(*label))
                     new_item.node.add_family(new_item.s, item.rule, new_item.start, item.node, token_node)
 
                     if new_item.expect in self.TERMINALS:
@@ -260,8 +264,8 @@ class Parser:
         assert start, start
         start_symbol = NonTerminal(start)
 
-        columns = [set()]
-        to_scan = set()     # The scan buffer. 'Q' in E.Scott's paper.
+        columns = [self.Set()]
+        to_scan = self.Set()     # The scan buffer. 'Q' in E.Scott's paper.
 
         ## Predict for the start_symbol.
         # Add predicted items to the first Earley set (for the predictor) if they
@@ -278,7 +282,7 @@ class Parser:
         # If the parse was successful, the start
         # symbol should have been completed in the last step of the Earley cycle, and will be in
         # this column. Find the item for the start_symbol, which is the root of the SPPF tree.
-        solutions = [n.node for n in columns[-1] if n.is_complete and n.node is not None and n.s == start_symbol and n.start == 0]
+        solutions = dedup_list(n.node for n in columns[-1] if n.is_complete and n.node is not None and n.s == start_symbol and n.start == 0)
         if not solutions:
             expected_terminals = [t.expect.name for t in to_scan]
             raise UnexpectedEOF(expected_terminals, state=frozenset(i.s for i in to_scan))
@@ -290,16 +294,24 @@ class Parser:
             except ImportError:
                 logger.warning("Cannot find dependency 'pydot', will not generate sppf debug image")
             else:
-                debug_walker.visit(solutions[0], "sppf.png")
+                for i, s in enumerate(solutions):
+                    debug_walker.visit(s, f"sppf{i}.png")
 
 
-        if len(solutions) > 1:
-            assert False, 'Earley should not generate multiple start symbol items!'
-
-        if self.tree_class is not None:
+        if self.Tree is not None:
             # Perform our SPPF -> AST conversion
-            transformer = ForestToParseTree(self.tree_class, self.callbacks, self.forest_sum_visitor and self.forest_sum_visitor(), self.resolve_ambiguity)
-            return transformer.transform(solutions[0])
+            # Disable the ForestToParseTree cache when ambiguity='resolve'
+            # to prevent a tree construction bug. See issue #1283
+            use_cache = not self.resolve_ambiguity
+            transformer = ForestToParseTree(self.Tree, self.callbacks, self.forest_sum_visitor and self.forest_sum_visitor(), self.resolve_ambiguity, use_cache)
+            solutions = [transformer.transform(s) for s in solutions]
+
+            if len(solutions) > 1 and not self.resolve_ambiguity:
+                t: Tree = self.Tree('_ambig', solutions)
+                t.expand_kids_by_data('_ambig')     # solutions may themselves be _ambig nodes
+                return t
+            return solutions[0]
 
         # return the root of the SPPF
+        # TODO return a list of solutions, or join them together somehow
         return solutions[0]

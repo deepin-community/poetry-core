@@ -1,0 +1,22 @@
+Description: Fix broken tests
+ Fix broken tests. They are looking for a folder that does not exist anymore in
+ the code.
+Author: Emmanuel Arias <eamanu@debian.org>
+Forwarded: https://github.com/python-poetry/poetry-core/pull/820
+Applied-Upstream: https://github.com/python-poetry/poetry-core/commit/ed9ac8cebdce2c0ffb073fd4ce159bdfd4203c88
+Last-Update: 2025-01-19
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/tests/masonry/builders/test_builder.py
++++ b/tests/masonry/builders/test_builder.py
+@@ -285,10 +285,6 @@
+     "fixture, result",
+     [
+         (
+-            "script_callable_legacy_table",
+-            [],
+-        ),
+-        (
+             "script_callable_legacy_string",
+             [],
+         ),

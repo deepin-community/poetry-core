@@ -29,10 +29,13 @@ class PackageSpecification:
     ) -> None:
         from packaging.utils import canonicalize_name
 
+        # Attributes must be immutable for clone() to be safe!
+        # (For performance reasons, clone only creates a copy instead of a deep copy).
+
         self._pretty_name = name
         self._name = canonicalize_name(name)
         self._source_type = source_type
-        self._source_url = source_url
+        self._source_url = self._normalize_source_url(source_type, source_url)
         self._source_reference = source_reference
         self._source_resolved_reference = source_resolved_reference
         self._source_subdirectory = source_subdirectory
@@ -41,6 +44,17 @@ class PackageSpecification:
             features = []
 
         self._features = frozenset(canonicalize_name(feature) for feature in features)
+
+    @staticmethod
+    def _normalize_source_url(
+        source_type: str | None, source_url: str | None
+    ) -> str | None:
+        if source_type and source_url and source_type == "git":
+            from poetry.core.vcs.git import ParsedUrl
+
+            return ParsedUrl.parse(source_url).url
+
+        return source_url
 
     @property
     def name(self) -> NormalizedName:
@@ -53,6 +67,16 @@ class PackageSpecification:
     @property
     def complete_name(self) -> str:
         name: str = self._name
+
+        if self._features:
+            features = ",".join(sorted(self._features))
+            name = f"{name}[{features}]"
+
+        return name
+
+    @property
+    def complete_pretty_name(self) -> str:
+        name = self._pretty_name
 
         if self._features:
             features = ",".join(sorted(self._features))
@@ -165,7 +189,7 @@ class PackageSpecification:
         return self.is_same_source_as(other)
 
     def clone(self: T) -> T:
-        return copy.deepcopy(self)
+        return copy.copy(self)
 
     def with_features(self: T, features: Iterable[str]) -> T:
         package = self.clone()

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import copy
-import re
 import warnings
 
-from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from typing import ClassVar
 from typing import TypeVar
@@ -13,15 +10,15 @@ from poetry.core.constraints.version import parse_constraint
 from poetry.core.constraints.version.exceptions import ParseConstraintError
 from poetry.core.packages.dependency_group import MAIN_GROUP
 from poetry.core.packages.specification import PackageSpecification
-from poetry.core.packages.utils.utils import create_nested_marker
-from poetry.core.version.exceptions import InvalidVersion
-from poetry.core.version.markers import parse_marker
+from poetry.core.utils.patterns import AUTHOR_REGEX
+from poetry.core.version.exceptions import InvalidVersionError
 
 
 if TYPE_CHECKING:
     from collections.abc import Collection
     from collections.abc import Iterable
-    from collections.abc import Iterator
+    from collections.abc import Mapping
+    from collections.abc import Sequence
     from pathlib import Path
 
     from packaging.utils import NormalizedName
@@ -34,10 +31,6 @@ if TYPE_CHECKING:
     from poetry.core.version.markers import BaseMarker
 
     T = TypeVar("T", bound="Package")
-
-AUTHOR_REGEX = re.compile(
-    r"(?u)^(?P<name>[- .,\w\d'’\"():&]+)(?: <(?P<email>.+?)>)?$"  # noqa: RUF001
-)
 
 
 class Package(PackageSpecification):
@@ -53,13 +46,14 @@ class Package(PackageSpecification):
         "3.9",
         "3.10",
         "3.11",
+        "3.12",
+        "3.13",
     }
 
     def __init__(
         self,
         name: str,
         version: str | Version,
-        pretty_version: str | None = None,
         source_type: str | None = None,
         source_url: str | None = None,
         source_reference: str | None = None,
@@ -74,14 +68,6 @@ class Package(PackageSpecification):
         """
         from poetry.core.version.markers import AnyMarker
 
-        if pretty_version is not None:
-            warnings.warn(
-                "The `pretty_version` parameter is deprecated and will be removed"
-                " in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         super().__init__(
             name,
             source_type=source_type,
@@ -92,34 +78,36 @@ class Package(PackageSpecification):
             features=features,
         )
 
+        # Attributes must be immutable for clone() to be safe!
+        # (For performance reasons, clone only creates a copy instead of a deep copy).
+
         self._set_version(version)
 
         self.description = ""
 
-        self._authors: list[str] = []
-        self._maintainers: list[str] = []
+        self.authors: Sequence[str] = []
+        self.maintainers: Sequence[str] = []
 
         self.homepage: str | None = None
         self.repository_url: str | None = None
         self.documentation_url: str | None = None
-        self.keywords: list[str] = []
+        self.keywords: Sequence[str] = []
         self._license: License | None = None
         self.readmes: tuple[Path, ...] = ()
+        self.readme_content_type: str | None = None
+        self.readme_content: str | None = None
 
-        self.extras: dict[NormalizedName, list[Dependency]] = {}
+        self.extras: Mapping[NormalizedName, Sequence[Dependency]] = {}
 
-        self._dependency_groups: dict[str, DependencyGroup] = {}
+        self._dependency_groups: Mapping[str, DependencyGroup] = {}
 
-        # Category is heading towards deprecation.
-        self._category = "main"
-        self.files: list[dict[str, str]] = []
+        self.files: Sequence[Mapping[str, str]] = []
         self.optional = False
 
-        self.classifiers: list[str] = []
+        self.classifiers: Sequence[str] = []
 
         self._python_versions = "*"
         self._python_constraint = parse_constraint("*")
-        self._python_marker: BaseMarker = AnyMarker()
 
         self.marker: BaseMarker = AnyMarker()
 
@@ -177,20 +165,12 @@ class Package(PackageSpecification):
         return f"{self.pretty_version} {ref}"
 
     @property
-    def authors(self) -> list[str]:
-        return self._authors
-
-    @property
     def author_name(self) -> str | None:
         return self._get_author()["name"]
 
     @property
     def author_email(self) -> str | None:
         return self._get_author()["email"]
-
-    @property
-    def maintainers(self) -> list[str]:
-        return self._maintainers
 
     @property
     def maintainer_name(self) -> str | None:
@@ -203,7 +183,7 @@ class Package(PackageSpecification):
     @property
     def requires(self) -> list[Dependency]:
         """
-        Returns the main dependencies
+        Returns the main dependencies.
         """
         if not self._dependency_groups or MAIN_GROUP not in self._dependency_groups:
             return []
@@ -211,16 +191,15 @@ class Package(PackageSpecification):
         return self._dependency_groups[MAIN_GROUP].dependencies
 
     @property
-    def all_requires(
-        self,
-    ) -> list[Dependency]:
+    def all_requires(self) -> list[Dependency]:
         """
-        Returns the main dependencies and group dependencies.
+        Returns the main dependencies and group dependencies
+        enriched with Poetry-specific information for locking.
         """
         return [
             dependency
             for group in self._dependency_groups.values()
-            for dependency in group.dependencies
+            for dependency in group.dependencies_for_locking
         ]
 
     def _set_version(self, version: str | Version) -> None:
@@ -229,18 +208,18 @@ class Package(PackageSpecification):
         if not isinstance(version, Version):
             try:
                 version = Version.parse(version)
-            except InvalidVersion:
-                raise InvalidVersion(
+            except InvalidVersionError:
+                raise InvalidVersionError(
                     f"Invalid version '{version}' on package {self.name}"
                 )
 
         self._version = version
 
     def _get_author(self) -> dict[str, str | None]:
-        if not self._authors:
+        if not self.authors:
             return {"name": None, "email": None}
 
-        m = AUTHOR_REGEX.match(self._authors[0])
+        m = AUTHOR_REGEX.match(self.authors[0])
 
         if m is None:
             raise ValueError(
@@ -254,10 +233,10 @@ class Package(PackageSpecification):
         return {"name": name, "email": email}
 
     def _get_maintainer(self) -> dict[str, str | None]:
-        if not self._maintainers:
+        if not self.maintainers:
             return {"name": None, "email": None}
 
-        m = AUTHOR_REGEX.match(self._maintainers[0])
+        m = AUTHOR_REGEX.match(self.maintainers[0])
 
         if m is None:
             raise ValueError(
@@ -281,11 +260,11 @@ class Package(PackageSpecification):
         except ParseConstraintError:
             raise ParseConstraintError(f"Invalid python versions '{value}' on {self}")
 
+        if constraint.is_empty():
+            raise ParseConstraintError(f"Python versions '{value}' on {self} is empty")
+
         self._python_versions = value
         self._python_constraint = constraint
-        self._python_marker = parse_marker(
-            create_nested_marker("python_version", self._python_constraint)
-        )
 
     @property
     def python_constraint(self) -> VersionConstraint:
@@ -293,7 +272,18 @@ class Package(PackageSpecification):
 
     @property
     def python_marker(self) -> BaseMarker:
-        return self._python_marker
+        from poetry.core.packages.utils.utils import create_nested_marker
+        from poetry.core.version.markers import parse_marker
+
+        warnings.warn(
+            "`python_marker` is deprecated and will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+        return parse_marker(
+            create_nested_marker("python_version", self._python_constraint)
+        )
 
     @property
     def license(self) -> License | None:
@@ -313,7 +303,7 @@ class Package(PackageSpecification):
     def all_classifiers(self) -> list[str]:
         from poetry.core.constraints.version import Version
 
-        classifiers = copy.copy(self.classifiers)
+        classifiers = list(self.classifiers)
 
         # Automatically set python classifiers
         if self.python_versions == "*":
@@ -377,44 +367,6 @@ class Package(PackageSpecification):
         return urls
 
     @property
-    def category(self) -> str:
-        warnings.warn(
-            "`category` is deprecated and will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._category
-
-    @category.setter
-    def category(self, category: str) -> None:
-        warnings.warn(
-            "Setting `category` is deprecated and will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._category = category
-
-    @property
-    def readme(self) -> Path | None:
-        warnings.warn(
-            "`readme` is deprecated: you are getting only the first readme file."
-            " Please use the plural form `readmes`.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return next(iter(self.readmes), None)
-
-    @readme.setter
-    def readme(self, path: Path) -> None:
-        warnings.warn(
-            "`readme` is deprecated. Please assign a tuple to the plural form"
-            " `readmes`.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.readmes = (path,)
-
-    @property
     def yanked(self) -> bool:
         return isinstance(self._yanked, str) or bool(self._yanked)
 
@@ -438,7 +390,9 @@ class Package(PackageSpecification):
         }
 
     def add_dependency_group(self, group: DependencyGroup) -> None:
-        self._dependency_groups[group.name] = group
+        groups = dict(self._dependency_groups)
+        groups[group.name] = group
+        self._dependency_groups = groups
 
     def has_dependency_group(self, name: str) -> bool:
         return name in self._dependency_groups
@@ -468,11 +422,14 @@ class Package(PackageSpecification):
         """
         Returns a clone of the package with the given dependency groups excluded.
         """
-        package = self.clone()
+        updated_groups = {
+            group_name: group
+            for group_name, group in self._dependency_groups.items()
+            if group_name not in groups
+        }
 
-        for group_name in groups:
-            if group_name in package._dependency_groups:
-                del package._dependency_groups[group_name]
+        package = self.clone()
+        package._dependency_groups = updated_groups
 
         return package
 
@@ -480,11 +437,13 @@ class Package(PackageSpecification):
         """
         Returns a clone of the package without optional dependency groups.
         """
+        updated_groups = {
+            group_name: group
+            for group_name, group in self._dependency_groups.items()
+            if not group.is_optional()
+        }
         package = self.clone()
-
-        for group_name, group in self._dependency_groups.items():
-            if group.is_optional():
-                del package._dependency_groups[group_name]
+        package._dependency_groups = updated_groups
 
         return package
 
@@ -499,11 +458,13 @@ class Package(PackageSpecification):
 
         If `only` is set to True, then only the given groups will be selected.
         """
+        updated_groups = {
+            group_name: group
+            for group_name, group in self._dependency_groups.items()
+            if group_name in groups or (not only and not group.is_optional())
+        }
         package = self.clone()
-
-        for group_name, group in self._dependency_groups.items():
-            if (only or group.is_optional()) and group_name not in groups:
-                del package._dependency_groups[group_name]
+        package._dependency_groups = updated_groups
 
         return package
 
@@ -577,16 +538,6 @@ class Package(PackageSpecification):
 
         return dep.with_constraint(self._version)
 
-    @contextmanager
-    def with_python_versions(self, python_versions: str) -> Iterator[None]:
-        original_python_versions = self.python_versions
-
-        self.python_versions = python_versions
-
-        yield
-
-        self.python_versions = original_python_versions
-
     def satisfies(
         self, dependency: Dependency, ignore_source_type: bool = False
     ) -> bool:
@@ -602,7 +553,7 @@ class Package(PackageSpecification):
         if not dependency.constraint.allows(self.version):
             return False
 
-        if not (ignore_source_type or self.source_satisfies(dependency)):
+        if not (ignore_source_type or self.source_satisfies(dependency)):  # noqa: SIM103
             return False
 
         return True

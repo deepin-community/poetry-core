@@ -11,7 +11,7 @@ from poetry.core.packages.directory_dependency import DirectoryDependency
 
 
 if TYPE_CHECKING:
-    from _pytest.logging import LogCaptureFixture
+    from pytest import LogCaptureFixture
     from pytest_mock import MockerFixture
 
 
@@ -64,6 +64,12 @@ def test_directory_dependency_is_not_a_python_project(
 
     with pytest.raises(ValueError, match="not .* a Python package"):
         dep.validate(raise_error=True)
+
+
+def test_directory_dependency_minimal() -> None:
+    path = Path(__file__).parent.parent / "fixtures" / "project_minimal"
+    dep = DirectoryDependency("demo", path)
+    dep.validate(raise_error=True)
 
 
 def _test_directory_dependency_pep_508(
