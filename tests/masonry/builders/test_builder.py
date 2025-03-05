@@ -16,9 +16,19 @@ if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
 
+def test_building_not_possible_in_non_package_mode() -> None:
+    with pytest.raises(RuntimeError) as err:
+        Builder(
+            Factory().create_poetry(
+                Path(__file__).parent.parent.parent / "fixtures" / "non_package_mode"
+            )
+        )
+
+    assert str(err.value) == "Building a package is not possible in non-package mode."
+
+
 def test_builder_find_excluded_files(mocker: MockerFixture) -> None:
-    p = mocker.patch("poetry.core.vcs.git.Git.get_ignored_files")
-    p.return_value = []
+    mocker.patch("poetry.core.vcs.git.Git.get_ignored_files", return_value=[])
 
     builder = Builder(
         Factory().create_poetry(Path(__file__).parent / "fixtures" / "complete")
@@ -32,8 +42,7 @@ def test_builder_find_excluded_files(mocker: MockerFixture) -> None:
     reason="Windows is case insensitive for the most part",
 )
 def test_builder_find_case_sensitive_excluded_files(mocker: MockerFixture) -> None:
-    p = mocker.patch("poetry.core.vcs.git.Git.get_ignored_files")
-    p.return_value = []
+    mocker.patch("poetry.core.vcs.git.Git.get_ignored_files", return_value=[])
 
     builder = Builder(
         Factory().create_poetry(
@@ -59,8 +68,7 @@ def test_builder_find_case_sensitive_excluded_files(mocker: MockerFixture) -> No
 def test_builder_find_invalid_case_sensitive_excluded_files(
     mocker: MockerFixture,
 ) -> None:
-    p = mocker.patch("poetry.core.vcs.git.Git.get_ignored_files")
-    p.return_value = []
+    mocker.patch("poetry.core.vcs.git.Git.get_ignored_files", return_value=[])
 
     builder = Builder(
         Factory().create_poetry(
@@ -81,7 +89,7 @@ def test_get_metadata_content() -> None:
     p = Parser()
     parsed = p.parsestr(metadata)
 
-    assert parsed["Metadata-Version"] == "2.1"
+    assert parsed["Metadata-Version"] == "2.3"
     assert parsed["Name"] == "my-package"
     assert parsed["Version"] == "1.2.3"
     assert parsed["Summary"] == "Some description."
@@ -90,7 +98,7 @@ def test_get_metadata_content() -> None:
     assert parsed["Keywords"] == "packaging,dependency,poetry"
     assert parsed["Requires-Python"] == ">=3.6,<4.0"
     assert parsed["License"] == "MIT"
-    assert parsed["Home-page"] == "https://python-poetry.org/"
+    assert parsed["Home-page"] is None
 
     classifiers = parsed.get_all("Classifier")
     assert classifiers == [
@@ -102,6 +110,8 @@ def test_get_metadata_content() -> None:
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Topic :: Software Development :: Build Tools",
         "Topic :: Software Development :: Libraries :: Python Modules",
     ]
@@ -122,6 +132,7 @@ def test_get_metadata_content() -> None:
     urls = parsed.get_all("Project-URL")
     assert urls == [
         "Documentation, https://python-poetry.org/docs",
+        "Homepage, https://python-poetry.org/",
         "Issue Tracker, https://github.com/python-poetry/poetry/issues",
         "Repository, https://github.com/python-poetry/poetry",
     ]
@@ -145,6 +156,40 @@ def test_metadata_homepage_default() -> None:
     metadata = Parser().parsestr(builder.get_metadata_content())
 
     assert metadata["Home-page"] is None
+
+
+@pytest.mark.parametrize("license_type", ["file", "text", "str"])
+def test_metadata_license_type_file(license_type: str) -> None:
+    project_path = (
+        Path(__file__).parent.parent.parent
+        / "fixtures"
+        / f"with_license_type_{license_type}"
+    )
+    builder = Builder(Factory().create_poetry(project_path))
+
+    if license_type == "file":
+        license_text = (project_path / "LICENSE").read_text(encoding="utf-8")
+    elif license_type == "text":
+        license_text = (
+            (project_path / "pyproject.toml")
+            .read_text(encoding="utf-8")
+            .split('"""')[1]
+        )
+    elif license_type == "str":
+        license_text = "MIT"
+    else:
+        raise RuntimeError("unexpected license type")
+
+    raw_content = builder.get_metadata_content()
+    metadata = Parser().parsestr(raw_content)
+
+    license_lines = metadata["License"].splitlines()
+    unindented_license = "\n".join([line.strip() for line in license_lines])
+    assert unindented_license == license_text.rstrip()
+
+    # Check that field after "license" is read correctly
+    assert raw_content.index("License:") < raw_content.index("Keywords:")
+    assert metadata["Keywords"] == "special"
 
 
 def test_metadata_with_vcs_dependencies() -> None:
@@ -173,8 +218,7 @@ def test_metadata_with_url_dependencies() -> None:
     requires_dist = metadata["Requires-Dist"]
 
     assert (
-        requires_dist
-        == "demo @"
+        requires_dist == "demo @"
         " https://python-poetry.org/distributions/demo-0.1.0-py2.py3-none-any.whl"
     )
 
@@ -189,7 +233,7 @@ def test_missing_script_files_throws_error() -> None:
     with pytest.raises(RuntimeError) as err:
         builder.convert_script_files()
 
-    assert "is not found." in err.value.args[0]
+    assert "is not found." in str(err.value)
 
 
 def test_invalid_script_files_definition() -> None:
@@ -202,35 +246,13 @@ def test_invalid_script_files_definition() -> None:
             )
         )
 
-    assert "configuration is invalid" in err.value.args[0]
-    assert "[scripts.invalid_definition]" in err.value.args[0]
-
-
-@pytest.mark.parametrize(
-    "fixture",
-    [
-        "script_callable_legacy_table",
-    ],
-)
-def test_entrypoint_scripts_legacy_warns(fixture: str) -> None:
-    with pytest.warns(DeprecationWarning):
-        Builder(
-            Factory().create_poetry(Path(__file__).parent / "fixtures" / fixture)
-        ).convert_entry_points()
+    assert "configuration is invalid" in str(err.value)
+    assert "scripts.invalid_definition" in str(err.value)
 
 
 @pytest.mark.parametrize(
     "fixture, result",
     [
-        (
-            "script_callable_legacy_table",
-            {
-                "console_scripts": [
-                    "extra-script-legacy = my_package.extra_legacy:main",
-                    "script-legacy = my_package.extra_legacy:main",
-                ]
-            },
-        ),
         (
             "script_callable_legacy_string",
             {"console_scripts": ["script-legacy = my_package:main"]},
@@ -239,7 +261,7 @@ def test_entrypoint_scripts_legacy_warns(fixture: str) -> None:
             "script_reference_console",
             {
                 "console_scripts": [
-                    "extra-script = my_package.extra:main[time]",
+                    "extra-script = my_package.extra:main",
                     "script = my_package.extra:main",
                 ]
             },
@@ -250,7 +272,6 @@ def test_entrypoint_scripts_legacy_warns(fixture: str) -> None:
         ),
     ],
 )
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_builder_convert_entry_points(
     fixture: str, result: dict[str, list[str]]
 ) -> None:
@@ -295,7 +316,9 @@ def test_metadata_with_readme_files() -> None:
 
     readme1 = test_path / "README-1.rst"
     readme2 = test_path / "README-2.rst"
-    description = "\n".join([readme1.read_text(), readme2.read_text(), ""])
+    description = "\n".join(
+        [readme1.read_text(encoding="utf-8"), readme2.read_text(encoding="utf-8"), ""]
+    )
 
     assert metadata.get_payload() == description
 

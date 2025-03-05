@@ -1,1 +1,3 @@
 0001-Skip-test-that-fail-on-the-build.patch
+fix-broken-test.patch
+update-test-to-avoid-error.patch

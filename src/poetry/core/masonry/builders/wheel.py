@@ -9,10 +9,12 @@ import shutil
 import stat
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import zipfile
 
 from base64 import urlsafe_b64encode
+from functools import cached_property
 from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -36,6 +38,8 @@ if TYPE_CHECKING:
     from packaging.utils import NormalizedName
 
     from poetry.core.poetry import Poetry
+
+    ZipInfoTimestamp = tuple[int, int, int, int, int, int]
 
 wheel_file_template = """\
 Wheel-Version: 1.0
@@ -101,17 +105,21 @@ class WheelBuilder(Builder):
 
         target_dir = target_dir or self.default_target_dir
         if not target_dir.exists():
-            target_dir.mkdir()
+            target_dir.mkdir(parents=True)
 
-        fd, temp_path = tempfile.mkstemp(suffix=".whl")
+        fd, temp = tempfile.mkstemp(suffix=".whl")
 
-        st_mode = os.stat(temp_path).st_mode
+        temp_path = Path(temp)
+        st_mode = temp_path.stat().st_mode
         new_mode = normalize_file_permissions(st_mode)
-        os.chmod(temp_path, new_mode)
+        temp_path.chmod(new_mode)
 
-        with os.fdopen(fd, "w+b") as fd_file, zipfile.ZipFile(
-            fd_file, mode="w", compression=zipfile.ZIP_DEFLATED
-        ) as zip_file:
+        with (
+            os.fdopen(fd, "w+b") as fd_file,
+            zipfile.ZipFile(
+                fd_file, mode="w", compression=zipfile.ZIP_DEFLATED
+            ) as zip_file,
+        ):
             if self._editable:
                 self._build(zip_file)
                 self._add_pth(zip_file)
@@ -136,7 +144,7 @@ class WheelBuilder(Builder):
         wheel_path = target_dir / self.wheel_filename
         if wheel_path.exists():
             wheel_path.unlink()
-        shutil.move(temp_path, str(wheel_path))
+        shutil.move(str(temp_path), str(wheel_path))
 
         logger.info(f"Built {self.wheel_filename}")
         return wheel_path
@@ -182,15 +190,17 @@ class WheelBuilder(Builder):
                     finally:
                         os.chdir(current_path)
 
-                    build_dir = self._path / "build"
-                    libs: list[Path] = list(build_dir.glob("lib.*"))
-                    if not libs:
+                    if self._editable:
+                        # For an editable install, the extension modules will be built
+                        # in-place - so there's no need to copy them into the zip
+                        return
+
+                    lib = self._get_build_lib_dir()
+                    if lib is None:
                         # The result of building the extensions
                         # does not exist, this may due to conditional
                         # builds, so we assume that it's okay
                         return
-
-                    lib = libs[0]
 
                     for pkg in sorted(lib.glob("**/*")):
                         if pkg.is_dir() or self.is_excluded(pkg):
@@ -205,6 +215,52 @@ class WheelBuilder(Builder):
 
                         self._add_file(wheel, pkg, rel_path)
 
+    def _get_build_purelib_dir(self) -> Path:
+        return self._path / "build" / "lib"
+
+    def _get_build_platlib_dir(self) -> Path:
+        # Roughly equivalent to the naming convention in used by distutils, see:
+        # distutils.command.build.build.finalize_options
+        if self.executable != Path(sys.executable):
+            # poetry-core is not run in the build environment
+            # -> this is probably not a PEP 517 build but a poetry build
+            try:
+                output = subprocess.check_output(
+                    [
+                        self.executable.as_posix(),
+                        "-c",
+                        """
+import sysconfig
+import sys
+print(sysconfig.get_platform(), sys.implementation.cache_tag, sep='-')
+""",
+                    ],
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                )
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    "Failed to get build_platlib_dir for python interpreter"
+                    f" '{self.executable.as_posix()}':\n{e.output}"
+                )
+            plat_specifier = output.strip()
+        else:
+            plat_specifier = "-".join(
+                (sysconfig.get_platform(), sys.implementation.cache_tag)
+            )
+        return self._path / "build" / f"lib.{plat_specifier}"
+
+    def _get_build_lib_dir(self) -> Path | None:
+        # Either the purelib or platlib path will have been used when building
+        build_platlib = self._get_build_platlib_dir()
+        build_purelib = self._get_build_purelib_dir()
+        if build_platlib.exists():
+            return build_platlib
+        elif build_purelib.exists():
+            return build_purelib
+        return None
+
     def _copy_file_scripts(self, wheel: zipfile.ZipFile) -> None:
         file_scripts = self.convert_script_files()
 
@@ -216,6 +272,15 @@ class WheelBuilder(Builder):
             )
 
     def _run_build_command(self, setup: Path) -> None:
+        if self._editable:
+            subprocess.check_call(
+                [
+                    self.executable.as_posix(),
+                    str(setup),
+                    "build_ext",
+                    "--inplace",
+                ]
+            )
         subprocess.check_call(
             [
                 self.executable.as_posix(),
@@ -223,6 +288,10 @@ class WheelBuilder(Builder):
                 "build",
                 "-b",
                 str(self._path / "build"),
+                "--build-purelib",
+                str(self._get_build_purelib_dir()),
+                "--build-platlib",
+                str(self._get_build_platlib_dir()),
             ]
         )
 
@@ -236,16 +305,13 @@ class WheelBuilder(Builder):
         # Walk the files and compress them,
         # sorting everything so the order is stable.
         for file in sorted(to_add, key=lambda x: x.path):
-            self._add_file(wheel, file.path, file.relative_to_source_root())
+            self._add_file(wheel, file.path, file.relative_to_target_root())
 
     def prepare_metadata(self, metadata_directory: Path) -> Path:
         dist_info = metadata_directory / self.dist_info
         dist_info.mkdir(parents=True, exist_ok=True)
 
-        if (
-            "scripts" in self._poetry.local_config
-            or "plugins" in self._poetry.local_config
-        ):
+        if self._poetry.package.entry_points:
             with (dist_info / "entry_points.txt").open(
                 "w", encoding="utf-8", newline="\n"
             ) as f:
@@ -257,21 +323,14 @@ class WheelBuilder(Builder):
         with (dist_info / "METADATA").open("w", encoding="utf-8", newline="\n") as f:
             self._write_metadata_file(f)
 
-        license_files = set()
-        for base in ("COPYING", "LICENSE"):
-            license_files.add(self._path / base)
-            license_files.update(self._path.glob(base + ".*"))
-
-        license_files.update(self._path.joinpath("LICENSES").glob("**/*"))
-
-        for license_file in license_files:
-            if not license_file.is_file():
-                logger.debug(f"Skipping: {license_file.as_posix()}")
+        for legal_file in self._get_legal_files():
+            if not legal_file.is_file():
+                logger.debug(f"Skipping: {legal_file.as_posix()}")
                 continue
 
-            dest = dist_info / license_file.relative_to(self._path)
+            dest = dist_info / legal_file.relative_to(self._path)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(license_file, dest)
+            shutil.copy(legal_file, dest)
 
         return dist_info
 
@@ -361,6 +420,7 @@ for t in packaging_tags.sys_tags():
                 ],
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
             )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
@@ -392,7 +452,7 @@ for t in packaging_tags.sys_tags():
     ) -> None:
         # We always want to have /-separated paths in the zip file and in RECORD
         rel_path_name = rel_path.as_posix()
-        zinfo = zipfile.ZipInfo(rel_path_name)
+        zinfo = zipfile.ZipInfo(rel_path_name, self._zipfile_date_time)
 
         # Normalize permission bits to either 755 (executable) or 644
         st_mode = full_path.stat().st_mode
@@ -425,10 +485,7 @@ for t in packaging_tags.sys_tags():
         sio = StringIO()
         yield sio
 
-        # The default is a fixed timestamp rather than the current time, so
-        # that building a wheel twice on the same computer can automatically
-        # give you the exact same result.
-        date_time = (2016, 1, 1, 0, 0, 0)
+        date_time = self._zipfile_date_time
         zi = zipfile.ZipInfo(rel_path, date_time)
         zi.external_attr = (0o644 & 0xFFFF) << 16  # Unix attributes
         b = sio.getvalue().encode("utf-8")
@@ -437,6 +494,40 @@ for t in packaging_tags.sys_tags():
 
         wheel.writestr(zi, b, compress_type=zipfile.ZIP_DEFLATED)
         self._records.append((rel_path, hash_digest, len(b)))
+
+    @cached_property
+    def _zipfile_date_time(self) -> ZipInfoTimestamp:
+        import time
+
+        # The default is a fixed timestamp rather than the current time, so
+        # that building a wheel twice on the same computer can automatically
+        # give you the exact same result.
+        default = (2016, 1, 1, 0, 0, 0)
+        try:
+            _env_date = time.gmtime(int(os.environ["SOURCE_DATE_EPOCH"]))[:6]
+        except ValueError:
+            logger.warning(
+                "SOURCE_DATE_EPOCH environment variable value"
+                " is not an int, setting zipinfo date to default=%s",
+                default,
+            )
+            return default
+        except KeyError:
+            logger.debug(
+                "SOURCE_DATE_EPOCH environment variable not set,"
+                " setting zipinfo date to default=%s",
+                default,
+            )
+            return default
+        else:
+            if _env_date[0] < 1980:
+                logger.warning(
+                    "zipinfo date can't be earlier than 1980,"
+                    " setting zipinfo date to default=%s",
+                    default,
+                )
+                return default
+            return _env_date
 
     def _write_entry_points(self, fp: TextIO) -> None:
         """

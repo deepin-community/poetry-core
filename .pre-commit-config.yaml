@@ -6,15 +6,15 @@ exclude: |
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: "vendors/patches/jsonschema.patch"
       - id: end-of-file-fixer
       - id: check-merge-conflict
       - id: check-case-conflict
       - id: check-json
       - id: check-toml
+        exclude: tests/fixtures/project_duplicate_dependency/pyproject.toml
       - id: check-yaml
       - id: pretty-format-json
         args:
@@ -25,12 +25,13 @@ repos:
       - id: debug-statements
       - id: check-docstring-first
 
-  - repo: https://github.com/psf/black
-    rev: 23.7.0
-    hooks:
-      - id: black
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.0.284
+    rev: v0.8.6
     hooks:
-    -   id: ruff
+      - id: ruff
+      - id: ruff-format
+
+  - repo: https://github.com/woodruffw/zizmor-pre-commit
+    rev: v1.0.0
+    hooks:
+      - id: zizmor

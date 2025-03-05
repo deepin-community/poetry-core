@@ -15,7 +15,7 @@ def base_object() -> dict[str, Any]:
         "description": "Some description.",
         "authors": ["Your Name <you@example.com>"],
         "dependencies": {"python": "^3.6"},
-        "dev-dependencies": {},
+        "group": {"dev": {"dependencies": {}}},
     }
 
 
@@ -35,19 +35,44 @@ def multi_url_object() -> dict[str, Any]:
                 {"path": "../foo", "platform": "darwin"},
             ]
         },
-        "dev-dependencies": {},
     }
+
+
+def test_non_package_mode_no_metadata() -> None:
+    assert len(validate_object({"package-mode": False}, "poetry-schema")) == 0
+
+
+def test_non_package_mode_with_metadata(base_object: dict[str, Any]) -> None:
+    base_object["package-mode"] = False
+    assert len(validate_object(base_object, "poetry-schema")) == 0
+
+
+def test_invalid_mode() -> None:
+    assert len(validate_object({"package-mode": "foo"}, "poetry-schema")) == 1
 
 
 def test_path_dependencies(base_object: dict[str, Any]) -> None:
     base_object["dependencies"].update({"foo": {"path": "../foo"}})
-    base_object["dev-dependencies"].update({"foo": {"path": "../foo"}})
+    base_object["group"]["dev"]["dependencies"].update({"foo": {"path": "../foo"}})
 
     assert len(validate_object(base_object, "poetry-schema")) == 0
 
 
 def test_multi_url_dependencies(multi_url_object: dict[str, Any]) -> None:
     assert len(validate_object(multi_url_object, "poetry-schema")) == 0
+
+
+@pytest.mark.parametrize(
+    "git",
+    [
+        "https://github.com/example/example-repository.git",
+        "git@github.com:example/example-repository.git",
+    ],
+)
+def test_git_dependencies(base_object: dict[str, Any], git: str) -> None:
+    base_object["dependencies"].update({"git-dependency": {"git": git}})
+
+    assert len(validate_object(base_object, "poetry-schema")) == 0
 
 
 @pytest.mark.parametrize(
@@ -63,8 +88,8 @@ def test_multiline_description(
 
     assert len(errors) == 1
 
-    regex = r"\\A[^\n]*\\Z"
-    assert errors[0] == f"[description] {bad_description!r} does not match '{regex}'"
+    regex = r"\A[^\n]*\Z"
+    assert errors[0] == f"data.description must match pattern {regex}"
 
 
 def test_bad_extra(base_object: dict[str, Any]) -> None:
@@ -74,6 +99,4 @@ def test_bad_extra(base_object: dict[str, Any]) -> None:
 
     errors = validate_object(base_object, "poetry-schema")
     assert len(errors) == 1
-    assert (
-        errors[0] == f"[extras.test.0] {bad_extra!r} does not match '^[a-zA-Z-_.0-9]+$'"
-    )
+    assert errors[0] == "data.extras.test[0] must match pattern ^[a-zA-Z-_.0-9]+$"

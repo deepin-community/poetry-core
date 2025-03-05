@@ -15,7 +15,7 @@ from poetry.core.packages.dependency import Dependency
 from poetry.core.packages.dependency_group import DependencyGroup
 from poetry.core.packages.package import Package
 from poetry.core.packages.project_package import ProjectPackage
-from poetry.core.version.exceptions import InvalidVersion
+from poetry.core.version.exceptions import InvalidVersionError
 
 
 if TYPE_CHECKING:
@@ -43,11 +43,11 @@ def package_with_groups() -> Package:
 def test_package_authors() -> None:
     package = Package("foo", "0.1.0")
 
-    package.authors.append("Sébastien Eustace <sebastien@eustace.io>")
+    package.authors = ["Sébastien Eustace <sebastien@eustace.io>"]
     assert package.author_name == "Sébastien Eustace"
     assert package.author_email == "sebastien@eustace.io"
 
-    package.authors.insert(0, "John Doe")
+    package.authors = ["John Doe", *package.authors]
     assert package.author_name == "John Doe"
     assert package.author_email is None
 
@@ -55,7 +55,7 @@ def test_package_authors() -> None:
 def test_package_authors_invalid() -> None:
     package = Package("foo", "0.1.0")
 
-    package.authors.insert(0, "<John Doe")
+    package.authors = ["<John Doe"]
     with pytest.raises(ValueError) as e:
         package.author_name  # noqa: B018
 
@@ -83,13 +83,15 @@ def test_package_authors_invalid() -> None:
         ("John-Paul: Doe", None),
         ("John-Paul: Doe", "jp@nomail.none"),
         ("John Doe the 3rd", "3rd@jd.net"),
+        ("FirstName LastName firstname.lastname@company.com", None),
+        ("Surname, Given Name [Department]", None),
     ],
 )
 def test_package_authors_valid(name: str, email: str | None) -> None:
     package = Package("foo", "0.1.0")
 
     author = name if email is None else f"{name} <{email}>"
-    package.authors.insert(0, author)
+    package.authors = [author]
     assert package.author_name == name
     assert package.author_email == email
 
@@ -98,18 +100,15 @@ def test_package_authors_valid(name: str, email: str | None) -> None:
     ("name",),
     [
         ("<john@john.doe>",),
-        ("john@john.doe",),
+        ("<john@john.doe",),
+        ("john@john.doe>",),
         ("<John Doe",),
-        ("John? Doe",),
-        ("Jane+Doe",),
-        ("~John Doe",),
-        ("John~Doe",),
     ],
 )
 def test_package_author_names_invalid(name: str) -> None:
     package = Package("foo", "0.1.0")
 
-    package.authors.insert(0, name)
+    package.authors = [name]
     with pytest.raises(ValueError):
         package.author_name  # noqa: B018
 
@@ -230,7 +229,7 @@ def test_package_equality_source_reference() -> None:
     assert a2 != a4
 
 
-def test_package_resolved_reference_is_relevant_for_equality_only_if_present_for_both_packages() -> (  # noqa: E501
+def test_package_resolved_reference_is_relevant_for_equality_only_if_present_for_both_packages() -> (
     None
 ):
     a1 = Package(
@@ -516,25 +515,6 @@ def test_only_with_dependency_groups(package_with_groups: Package) -> None:
     assert len(package.all_requires) == 2
 
 
-def test_get_readme_property_with_multiple_readme_files() -> None:
-    package = Package("foo", "0.1.0")
-
-    package.readmes = (Path("README.md"), Path("HISTORY.md"))
-    with pytest.deprecated_call():
-        assert package.readme == Path("README.md")
-
-
-def test_set_readme_property() -> None:
-    package = Package("foo", "0.1.0")
-
-    with pytest.deprecated_call():
-        package.readme = Path("README.md")
-
-    assert package.readmes == (Path("README.md"),)
-    with pytest.deprecated_call():
-        assert package.readme == Path("README.md")
-
-
 @pytest.mark.parametrize(
     ("package", "dependency", "ignore_source_type", "result"),
     [
@@ -623,10 +603,11 @@ def test_python_versions_are_made_precise() -> None:
     package = Package("foo", "1.2.3")
     package.python_versions = ">3.6,<=3.10"
 
-    assert (
-        str(package.python_marker)
-        == 'python_full_version > "3.6.0" and python_full_version <= "3.10.0"'
-    )
+    with pytest.warns(DeprecationWarning):
+        assert (
+            str(package.python_marker)
+            == 'python_full_version > "3.6.0" and python_full_version <= "3.10.0"'
+        )
     assert str(package.python_constraint) == ">3.6,<=3.10"
 
 
@@ -663,7 +644,7 @@ def test_project_package_hash_not_changed_when_version_is_changed() -> None:
 
 
 def test_package_invalid_version() -> None:
-    with pytest.raises(InvalidVersion) as exc_info:
+    with pytest.raises(InvalidVersionError) as exc_info:
         Package("foo", "1.2.3.bogus")
 
     expected = "Invalid version '1.2.3.bogus' on package foo"
@@ -676,4 +657,13 @@ def test_package_invalid_python_versions() -> None:
         package.python_versions = ">=3.6.y"
 
     expected = "Invalid python versions '>=3.6.y' on foo (1.2.3)"
+    assert str(exc_info.value) == expected
+
+
+def test_package_empty_python_versions() -> None:
+    package = Package("foo", "1.2.3")
+    with pytest.raises(ParseConstraintError) as exc_info:
+        package.python_versions = "~2.7, >=3.4, <3.8"
+
+    expected = "Python versions '~2.7, >=3.4, <3.8' on foo (1.2.3) is empty"
     assert str(exc_info.value) == expected

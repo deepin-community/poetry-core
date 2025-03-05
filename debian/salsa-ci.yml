@@ -1,3 +1,6 @@
 include:
-  - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/salsa-ci.yml
-  - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/pipeline-jobs.yml
+  - https://salsa.debian.org/jas/pipeline/raw/build-reverse-dependencies/salsa-ci.yml
+  - https://salsa.debian.org/jas/pipeline/raw/build-reverse-dependencies/pipeline-jobs.yml
+
+variables:
+  SALSA_CI_DISABLE_REVERSE_DEPENDENCIES: 'false'
