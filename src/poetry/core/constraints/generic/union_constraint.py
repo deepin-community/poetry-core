@@ -5,7 +5,9 @@ import itertools
 from poetry.core.constraints.generic import AnyConstraint
 from poetry.core.constraints.generic.base_constraint import BaseConstraint
 from poetry.core.constraints.generic.constraint import Constraint
+from poetry.core.constraints.generic.constraint import ExtraConstraint
 from poetry.core.constraints.generic.empty_constraint import EmptyConstraint
+from poetry.core.constraints.generic.multi_constraint import ExtraMultiConstraint
 from poetry.core.constraints.generic.multi_constraint import MultiConstraint
 
 
@@ -24,47 +26,23 @@ class UnionConstraint(BaseConstraint):
         return any(constraint.allows(other) for constraint in self._constraints)
 
     def allows_any(self, other: BaseConstraint) -> bool:
-        if other.is_empty():
-            return False
+        if isinstance(other, UnionConstraint):
+            return any(
+                c1.allows_any(c2)
+                for c1 in self._constraints
+                for c2 in other.constraints
+            )
 
-        if other.is_any():
-            return True
-
-        if isinstance(other, (UnionConstraint, MultiConstraint)):
-            constraints = other.constraints
-        else:
-            constraints = (other,)
-
-        return any(
-            our_constraint.allows_any(their_constraint)
-            for our_constraint in self._constraints
-            for their_constraint in constraints
-        )
+        return any(c.allows_any(other) for c in self._constraints)
 
     def allows_all(self, other: BaseConstraint) -> bool:
-        if other.is_any():
-            return False
+        if isinstance(other, UnionConstraint):
+            return all(
+                any(c1.allows_all(c2) for c1 in self._constraints)
+                for c2 in other.constraints
+            )
 
-        if other.is_empty():
-            return True
-
-        if isinstance(other, (UnionConstraint, MultiConstraint)):
-            constraints = other.constraints
-        else:
-            constraints = (other,)
-
-        our_constraints = iter(self._constraints)
-        their_constraints = iter(constraints)
-        our_constraint = next(our_constraints, None)
-        their_constraint = next(their_constraints, None)
-
-        while our_constraint and their_constraint:
-            if our_constraint.allows_all(their_constraint):
-                their_constraint = next(their_constraints, None)
-            else:
-                our_constraint = next(our_constraints, None)
-
-        return their_constraint is None
+        return any(c.allows_all(other) for c in self._constraints)
 
     def invert(self) -> MultiConstraint:
         inverted_constraints = [c.invert() for c in self._constraints]
@@ -72,13 +50,25 @@ class UnionConstraint(BaseConstraint):
             raise NotImplementedError(
                 "Inversion of complex union constraints not implemented"
             )
-        return MultiConstraint(*inverted_constraints)  # type: ignore[arg-type]
+        if any(isinstance(c, ExtraConstraint) for c in inverted_constraints):
+            multi_type: type[MultiConstraint] = ExtraMultiConstraint
+        else:
+            multi_type = MultiConstraint
+        return multi_type(*inverted_constraints)  # type: ignore[arg-type]
 
     def intersect(self, other: BaseConstraint) -> BaseConstraint:
         if other.is_any():
             return self
 
         if other.is_empty():
+            return other
+
+        if isinstance(other, UnionConstraint) and set(other.constraints) == set(
+            self._constraints
+        ):
+            return self
+
+        if isinstance(other, ExtraConstraint) and other in self._constraints:
             return other
 
         if isinstance(other, Constraint):
@@ -121,6 +111,9 @@ class UnionConstraint(BaseConstraint):
             return other
 
         if other.is_empty():
+            return self
+
+        if other == self:
             return self
 
         if isinstance(other, Constraint):

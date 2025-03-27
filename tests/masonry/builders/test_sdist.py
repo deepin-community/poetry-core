@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import gzip
 import hashlib
+import logging
 import shutil
 import tarfile
 
@@ -10,7 +11,6 @@ from email.parser import Parser
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any
-from typing import Iterator
 
 import pytest
 
@@ -25,6 +25,10 @@ from poetry.core.packages.vcs_dependency import VCSDependency
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from pytest import LogCaptureFixture
+    from pytest import MonkeyPatch
     from pytest_mock import MockerFixture
 
 fixtures_dir = Path(__file__).parent / "fixtures"
@@ -104,11 +108,10 @@ def test_convert_dependencies() -> None:
     main = ["B>=1.0,<1.1"]
 
     extra_python = (
-        ':python_version >= "2.7" and python_version < "2.8" '
-        'or python_version >= "3.6" and python_version < "4.0"'
+        ':python_version == "2.7" or python_version >= "3.6" and python_version < "4.0"'
     )
     extra_d_dependency = (
-        'baz:python_version >= "2.7" and python_version < "2.8" '
+        'baz:python_version == "2.7" '
         'or python_version >= "3.4" and python_version < "4.0"'
     )
     extras = {extra_python: ["C==1.2.3"], extra_d_dependency: ["D==3.4.5"]}
@@ -116,8 +119,11 @@ def test_convert_dependencies() -> None:
     assert result == (main, extras)
 
 
-def test_make_setup() -> None:
-    poetry = Factory().create_poetry(project("complete"))
+@pytest.mark.parametrize(
+    "project_name", ["complete", "complete_new", "complete_dynamic"]
+)
+def test_make_setup(project_name: str) -> None:
+    poetry = Factory().create_poetry(project(project_name))
 
     builder = SdistBuilder(poetry)
     setup = builder.build_setup()
@@ -135,24 +141,30 @@ def test_make_setup() -> None:
     assert ns["install_requires"] == ["cachy[msgpack]>=0.2.0,<0.3.0", "cleo>=0.6,<0.7"]
     assert ns["entry_points"] == {
         "console_scripts": [
-            "extra-script = my_package.extra:main[time]",
+            "extra-script = my_package.extra:main",
             "my-2nd-script = my_package:main2",
             "my-script = my_package:main",
-        ]
+        ],
+        "poetry.application.plugin": [
+            "my-command = my_package.plugins:MyApplicationPlugin"
+        ],
     }
     assert ns["scripts"] == [str(Path("bin") / "script.sh")]
     assert ns["extras_require"] == {
-        'time:python_version ~= "2.7" and sys_platform == "win32" or python_version in "3.4 3.5"': [  # noqa: E501
+        'time:python_version ~= "2.7" and sys_platform == "win32" or python_version in "3.4 3.5"': [
             "pendulum>=1.4,<2.0"
         ]
     }
 
 
-def test_make_pkg_info(mocker: MockerFixture) -> None:
+@pytest.mark.parametrize(
+    "project_name", ["complete", "complete_new", "complete_dynamic"]
+)
+def test_make_pkg_info(project_name: str, mocker: MockerFixture) -> None:
     get_metadata_content = mocker.patch(
         "poetry.core.masonry.builders.builder.Builder.get_metadata_content"
     )
-    poetry = Factory().create_poetry(project("complete"))
+    poetry = Factory().create_poetry(project(project_name))
 
     builder = SdistBuilder(poetry)
     builder.build_pkg_info()
@@ -171,13 +183,19 @@ def test_make_pkg_info_any_python() -> None:
     assert "Requires-Python" not in parsed
 
 
-def test_find_files_to_add() -> None:
-    poetry = Factory().create_poetry(project("complete"))
+@pytest.mark.parametrize(
+    "project_name", ["complete", "complete_new", "complete_dynamic"]
+)
+def test_find_files_to_add(project_name: str) -> None:
+    poetry = Factory().create_poetry(project(project_name))
 
     builder = SdistBuilder(poetry)
     result = {f.relative_to_source_root() for f in builder.find_files_to_add()}
 
     assert result == {
+        Path("AUTHORS"),
+        Path("COPYING"),
+        Path("LICENCE"),
         Path("LICENSE"),
         Path("README.rst"),
         Path("bin/script.sh"),
@@ -226,13 +244,16 @@ def test_make_pkg_info_multi_constraints_dependency() -> None:
     ]
 
 
-def test_find_packages() -> None:
-    poetry = Factory().create_poetry(project("complete"))
+@pytest.mark.parametrize(
+    "project_name", ["complete", "complete_new", "complete_dynamic"]
+)
+def test_find_packages(project_name: str) -> None:
+    poetry = Factory().create_poetry(project(project_name))
 
     builder = SdistBuilder(poetry)
 
-    base = project("complete")
-    include = PackageInclude(base, "my_package")
+    base = project(project_name)
+    include = PackageInclude(base, "my_package", formats=["sdist"])
 
     pkg_dir, packages, pkg_data = builder.find_packages(include)
 
@@ -254,7 +275,7 @@ def test_find_packages() -> None:
     builder = SdistBuilder(poetry)
 
     base = project("source_package")
-    include = PackageInclude(base, "package_src", source="src")
+    include = PackageInclude(base, "package_src", source="src", formats=["sdist"])
 
     pkg_dir, packages, pkg_data = builder.find_packages(include)
 
@@ -263,13 +284,16 @@ def test_find_packages() -> None:
     assert pkg_data == {"": ["*"]}
 
 
-def test_package() -> None:
-    poetry = Factory().create_poetry(project("complete"))
+@pytest.mark.parametrize(
+    "project_name", ["complete", "complete_new", "complete_dynamic"]
+)
+def test_package(project_name: str) -> None:
+    poetry = Factory().create_poetry(project(project_name))
 
     builder = SdistBuilder(poetry)
     builder.build()
 
-    sdist = fixtures_dir / "complete" / "dist" / "my_package-1.2.3.tar.gz"
+    sdist = fixtures_dir / project_name / "dist" / "my_package-1.2.3.tar.gz"
 
     assert sdist.exists()
 
@@ -277,8 +301,28 @@ def test_package() -> None:
         assert "my_package-1.2.3/LICENSE" in tar.getnames()
 
 
-def test_sdist_reproducibility() -> None:
+@pytest.mark.parametrize("target_dir", [None, "dist", "dist/build"])
+def test_package_target_dir(tmp_path: Path, target_dir: str | None) -> None:
     poetry = Factory().create_poetry(project("complete"))
+
+    builder = SdistBuilder(poetry)
+    builder.build(target_dir=tmp_path / target_dir if target_dir else None)
+
+    sdist = (
+        tmp_path / target_dir if target_dir else fixtures_dir / "complete" / "dist"
+    ) / "my_package-1.2.3.tar.gz"
+
+    assert sdist.exists()
+
+    with tarfile.open(str(sdist), "r") as tar:
+        assert "my_package-1.2.3/LICENSE" in tar.getnames()
+
+
+@pytest.mark.parametrize(
+    "project_name", ["complete", "complete_new", "complete_dynamic"]
+)
+def test_sdist_reproducibility(project_name: str) -> None:
+    poetry = Factory().create_poetry(project(project_name))
 
     hashes = set()
 
@@ -286,7 +330,7 @@ def test_sdist_reproducibility() -> None:
         builder = SdistBuilder(poetry)
         builder.build()
 
-        sdist = fixtures_dir / "complete" / "dist" / "my_package-1.2.3.tar.gz"
+        sdist = fixtures_dir / project_name / "dist" / "my_package-1.2.3.tar.gz"
 
         assert sdist.exists()
 
@@ -295,8 +339,11 @@ def test_sdist_reproducibility() -> None:
     assert len(hashes) == 1
 
 
-def test_setup_py_context() -> None:
-    poetry = Factory().create_poetry(project("complete"))
+@pytest.mark.parametrize(
+    "project_name", ["complete", "complete_new", "complete_dynamic"]
+)
+def test_setup_py_context(project_name: str) -> None:
+    poetry = Factory().create_poetry(project(project_name))
 
     builder = SdistBuilder(poetry)
 
@@ -309,7 +356,7 @@ def test_setup_py_context() -> None:
             assert setup.exists()
             assert project_setup_py == setup
 
-            with open(str(setup), "rb") as f:
+            with setup.open(mode="rb") as f:
                 # we convert to string  and replace line endings here for compatibility
                 data = f.read().decode().replace("\r\n", "\n")
                 assert data == builder.build_setup().decode()
@@ -437,27 +484,10 @@ def test_with_src_module_dir() -> None:
 
 
 def test_default_with_excluded_data(mocker: MockerFixture) -> None:
-    class MockGit:
-        def get_ignored_files(self, folder: Path | None = None) -> list[str]:
-            # Patch git module to return specific excluded files
-            return [
-                (
-                    (
-                        Path(__file__).parent
-                        / "fixtures"
-                        / "default_with_excluded_data"
-                        / "my_package"
-                        / "data"
-                        / "sub_data"
-                        / "data2.txt"
-                    )
-                    .relative_to(project("default_with_excluded_data"))
-                    .as_posix()
-                )
-            ]
-
-    p = mocker.patch("poetry.core.vcs.get_vcs")
-    p.return_value = MockGit()
+    mocker.patch(
+        "poetry.core.vcs.git.Git.get_ignored_files",
+        return_value=["my_package/data/sub_data/data2.txt"],
+    )
     poetry = Factory().create_poetry(project("default_with_excluded_data"))
 
     builder = SdistBuilder(poetry)
@@ -483,7 +513,6 @@ def test_default_with_excluded_data(mocker: MockerFixture) -> None:
     )
 
     assert sdist.exists()
-
     with tarfile.open(str(sdist), "r") as tar:
         names = tar.getnames()
         assert len(names) == len(set(names))
@@ -493,16 +522,6 @@ def test_default_with_excluded_data(mocker: MockerFixture) -> None:
         assert "my_package-1.2.3/my_package/data/data1.txt" in names
         assert "my_package-1.2.3/pyproject.toml" in names
         assert "my_package-1.2.3/PKG-INFO" in names
-        # all last modified times should be set to a valid timestamp
-        for tarinfo in tar.getmembers():
-            if tarinfo.name in [
-                "my_package-1.2.3/setup.py",
-                "my_package-1.2.3/PKG-INFO",
-            ]:
-                # generated files have timestamp set to 0
-                assert tarinfo.mtime == 0
-                continue
-            assert tarinfo.mtime > 0
 
 
 def test_src_excluded_nested_data() -> None:
@@ -559,6 +578,25 @@ def test_proper_python_requires_if_three_digits_precision_version_specified() ->
     assert parsed["Requires-Python"] == "==2.7.15"
 
 
+def test_sdist_does_not_include_pycache_and_pyc_files(
+    complete_with_pycache_and_pyc_files: Path,
+) -> None:
+    poetry = Factory().create_poetry(complete_with_pycache_and_pyc_files)
+
+    builder = SdistBuilder(poetry)
+
+    builder.build()
+
+    sdist = complete_with_pycache_and_pyc_files / "dist" / "my_package-1.2.3.tar.gz"
+
+    assert sdist.exists()
+
+    with tarfile.open(str(sdist), "r") as tar:
+        for name in tar.getnames():
+            assert "__pycache__" not in name
+            assert not name.endswith(".pyc")
+
+
 def test_includes() -> None:
     poetry = Factory().create_poetry(project("with-include"))
 
@@ -571,31 +609,51 @@ def test_includes() -> None:
     assert sdist.exists()
 
     with tarfile.open(str(sdist), "r") as tar:
-        assert "with_include-1.2.3/extra_dir/vcs_excluded.txt" in tar.getnames()
+        assert "with_include-1.2.3/extra_dir/vcs_excluded.py" in tar.getnames()
         assert "with_include-1.2.3/notes.txt" in tar.getnames()
 
 
-def test_includes_with_inline_table() -> None:
-    poetry = Factory().create_poetry(project("with_include_inline_table"))
+def test_include_formats() -> None:
+    poetry = Factory().create_poetry(project("with-include-formats"))
 
     builder = SdistBuilder(poetry)
 
     builder.build()
 
-    sdist = (
-        fixtures_dir
-        / "with_include_inline_table"
-        / "dist"
-        / "with_include-1.2.3.tar.gz"
-    )
+    sdist = fixtures_dir / "with-include-formats" / "dist" / "with_include-1.2.3.tar.gz"
 
     assert sdist.exists()
 
     with tarfile.open(str(sdist), "r") as tar:
-        assert "with_include-1.2.3/both.txt" in tar.getnames()
+        # packages
+        assert "with_include-1.2.3/src/mod_default.py" in tar.getnames()
+        assert "with_include-1.2.3/src/mod_sdist_only.py" in tar.getnames()
+        assert "with_include-1.2.3/src/mod_wheel_only.py" not in tar.getnames()
+        assert "with_include-1.2.3/src/mod_both.py" in tar.getnames()
+        assert "with_include-1.2.3/src/pkg_default/__init__.py" in tar.getnames()
+        assert "with_include-1.2.3/src/pkg_default/sub/__init__.py" in tar.getnames()
+        assert "with_include-1.2.3/src/pkg_sdist_only/__init__.py" in tar.getnames()
+        assert "with_include-1.2.3/src/pkg_sdist_only/sub/__init__.py" in tar.getnames()
+        assert "with_include-1.2.3/src/pkg_wheel_only/__init__.py" not in tar.getnames()
+        assert (
+            "with_include-1.2.3/src/pkg_wheel_only/sub/__init__.py"
+            not in tar.getnames()
+        )
+        assert "with_include-1.2.3/src/pkg_both/__init__.py" in tar.getnames()
+        assert "with_include-1.2.3/src/pkg_both/sub/__init__.py" in tar.getnames()
+        # other includes
+        assert "with_include-1.2.3/default.txt" in tar.getnames()
+        assert "with_include-1.2.3/sdist_only.txt" in tar.getnames()
         assert "with_include-1.2.3/wheel_only.txt" not in tar.getnames()
-        assert "with_include-1.2.3/tests/__init__.py" in tar.getnames()
-        assert "with_include-1.2.3/tests/test_foo/test.py" in tar.getnames()
+        assert "with_include-1.2.3/both.txt" in tar.getnames()
+        assert "with_include-1.2.3/default/file.txt" in tar.getnames()
+        assert "with_include-1.2.3/default/sub/file.txt" in tar.getnames()
+        assert "with_include-1.2.3/sdist_only/file.txt" in tar.getnames()
+        assert "with_include-1.2.3/sdist_only/sub/file.txt" in tar.getnames()
+        assert "with_include-1.2.3/wheel_only/file.txt" not in tar.getnames()
+        assert "with_include-1.2.3/wheel_only/sub/file.txt" not in tar.getnames()
+        assert "with_include-1.2.3/both/file.txt" in tar.getnames()
+        assert "with_include-1.2.3/both/sub/file.txt" in tar.getnames()
 
 
 def test_excluded_subpackage() -> None:
@@ -680,3 +738,62 @@ def test_split_source() -> None:
     ns: dict[str, Any] = {}
     exec(compile(setup_ast, filename="setup.py", mode="exec"), ns)
     assert "" in ns["package_dir"] and "module_b" in ns["package_dir"]
+
+
+@pytest.mark.parametrize("log_level", [logging.INFO, logging.DEBUG])
+def test_sdist_members_mtime_default(caplog: LogCaptureFixture, log_level: int) -> None:
+    caplog.set_level(log_level)
+    poetry = Factory().create_poetry(project("module1"))
+
+    builder = SdistBuilder(poetry)
+    builder.build()
+
+    sdist = fixtures_dir / "module1" / "dist" / "module1-0.1.tar.gz"
+
+    assert sdist.exists()
+
+    with tarfile.open(str(sdist), "r") as tar:
+        for tarinfo in tar.getmembers():
+            assert tarinfo.mtime == 0
+
+    source_data_epoch_message = (
+        "SOURCE_DATE_EPOCH environment variable is not set, using mtime=0"
+    )
+    if log_level == logging.DEBUG:
+        assert source_data_epoch_message in caplog.messages
+    else:
+        assert source_data_epoch_message not in caplog.messages
+
+
+def test_sdist_mtime_set_from_envvar(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1727883000")
+    poetry = Factory().create_poetry(project("module1"))
+
+    builder = SdistBuilder(poetry)
+    builder.build()
+
+    sdist = fixtures_dir / "module1" / "dist" / "module1-0.1.tar.gz"
+
+    assert sdist.exists()
+
+    with tarfile.open(str(sdist), "r") as tar:
+        for tarinfo in tar.getmembers():
+            assert tarinfo.mtime == 1727883000
+
+
+def test_sdist_mtime_set_from_envvar_not_int(
+    monkeypatch: MonkeyPatch, caplog: LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "october")
+    poetry = Factory().create_poetry(project("module1"))
+
+    builder = SdistBuilder(poetry)
+    builder.build()
+
+    sdist = fixtures_dir / "module1" / "dist" / "module1-0.1.tar.gz"
+
+    assert sdist.exists()
+
+    assert (
+        "SOURCE_DATE_EPOCH environment variable is not an int, using mtime=0"
+    ) in caplog.messages

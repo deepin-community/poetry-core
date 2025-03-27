@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
 
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 from typing import Any
-from typing import Generator
 
 import tomli_w
 
 from poetry.core.utils._compat import tomllib
+
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 __toml_build_backend_patch__ = {
@@ -59,26 +64,28 @@ def subprocess_run(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str
     """
     Helper method to run a subprocess. Asserts for success.
     """
-    result = subprocess.run(args, text=True, capture_output=True, **kwargs)
+    encoding = "locale" if sys.version_info >= (3, 10) else None
+    result = subprocess.run(
+        args, text=True, encoding=encoding, capture_output=True, **kwargs
+    )
     assert result.returncode == 0
     return result
 
 
 def validate_wheel_contents(
-    name: str, version: str, path: str, files: list[str] | None = None
+    name: str, version: str, path: Path, files: list[str] | None = None
 ) -> None:
     dist_info = f"{name}-{version}.dist-info"
     files = files or []
 
     with zipfile.ZipFile(path) as z:
         namelist = z.namelist()
-        # we use concatenation here for PY2 compat
         for filename in ["WHEEL", "METADATA", "RECORD", *files]:
             assert f"{dist_info}/{filename}" in namelist
 
 
 def validate_sdist_contents(
-    name: str, version: str, path: str, files: list[str]
+    name: str, version: str, path: Path, files: list[str]
 ) -> None:
     escaped_name = name.replace("-", "_")
     with tarfile.open(path) as tar:

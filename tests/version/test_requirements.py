@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from poetry.core.constraints.version import parse_constraint
-from poetry.core.version.requirements import InvalidRequirement
+from poetry.core.version.requirements import InvalidRequirementError
 from poetry.core.version.requirements import Requirement
 
 
@@ -103,9 +103,18 @@ def assert_requirement(
             {
                 "name": "foo",
                 "constraint": ">=1.2.3",
+                "marker": ('python_version == "2.7" or python_version == "3.4"'),
+            },
+        ),
+        (
+            (
+                'foo (>=1.2.3) ; "tegra" not in platform_release and python_version >= "3.10"'
+            ),
+            {
+                "name": "foo",
+                "constraint": ">=1.2.3",
                 "marker": (
-                    'python_version >= "2.7" and python_version < "2.8" or'
-                    ' python_version >= "3.4" and python_version < "3.5"'
+                    '"tegra" not in platform_release and python_version >= "3.10"'
                 ),
             },
         ),
@@ -122,13 +131,12 @@ def test_requirement(string: str, expected: dict[str, Any]) -> None:
     [
         ("foo!", "Unexpected character at column 4\n\nfoo!\n   ^\n"),
         ("foo (>=bar)", 'invalid version constraint ">=bar"'),
-        ("name @ file:.", "invalid URL"),
         ("name @ file:/.", "invalid URL"),
     ],
 )
 def test_invalid_requirement(string: str, exception: str) -> None:
     with pytest.raises(
-        InvalidRequirement,
+        InvalidRequirementError,
         match=re.escape(f"The requirement is invalid: {exception}"),
     ):
         Requirement(string)

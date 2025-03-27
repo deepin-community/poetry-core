@@ -28,13 +28,23 @@ class PyProjectTOML:
             if not self.path.exists():
                 self._data = {}
             else:
-                with self.path.open("rb") as f:
-                    self._data = tomllib.load(f)
+                try:
+                    with self.path.open("rb") as f:
+                        self._data = tomllib.load(f)
+                except tomllib.TOMLDecodeError as e:
+                    from poetry.core.pyproject.exceptions import PyProjectError
+
+                    msg = (
+                        f"{self._path.as_posix()} is not a valid TOML file.\n"
+                        f"{e.__class__.__name__}: {e}"
+                    )
+
+                    if str(e).startswith("Cannot overwrite a value"):
+                        msg += "\nThis is often caused by a duplicate entry."
+
+                    raise PyProjectError(msg) from e
 
         return self._data
-
-    def is_build_system_defined(self) -> bool:
-        return "build-system" in self.data
 
     @property
     def build_system(self) -> BuildSystem:
@@ -63,18 +73,30 @@ class PyProjectTOML:
             assert isinstance(config, dict)
             return config
         except KeyError as e:
-            from poetry.core.pyproject.exceptions import PyProjectException
+            from poetry.core.pyproject.exceptions import PyProjectError
 
-            raise PyProjectException(
+            raise PyProjectError(
                 f"[tool.poetry] section not found in {self._path.as_posix()}"
             ) from e
 
     def is_poetry_project(self) -> bool:
-        from poetry.core.pyproject.exceptions import PyProjectException
+        from poetry.core.pyproject.exceptions import PyProjectError
 
         if self.path.exists():
-            with suppress(PyProjectException):
+            with suppress(PyProjectError):
                 _ = self.poetry_config
                 return True
+
+            # Even if there is no [tool.poetry] section, a project can still be a
+            # valid Poetry project if there is a name and a version in [project]
+            # and there are no dynamic fields.
+            with suppress(KeyError):
+                project = self.data["project"]
+                if (
+                    project["name"]
+                    and project["version"]
+                    and not project.get("dynamic")
+                ):
+                    return True
 
         return False

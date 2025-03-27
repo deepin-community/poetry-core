@@ -8,9 +8,11 @@ import pytest
 
 from poetry.core.constraints.generic import UnionConstraint
 from poetry.core.constraints.generic import parse_constraint as parse_generic_constraint
+from poetry.core.constraints.version import parse_constraint as parse_version_constraint
 from poetry.core.version.markers import AnyMarker
 from poetry.core.version.markers import AtomicMarkerUnion
 from poetry.core.version.markers import EmptyMarker
+from poetry.core.version.markers import InvalidMarkerError
 from poetry.core.version.markers import MarkerUnion
 from poetry.core.version.markers import MultiMarker
 from poetry.core.version.markers import SingleMarker
@@ -49,10 +51,44 @@ EMPTY = "<empty>"
             ' "linux" and python_version < "3.6" and python_version >= "3.3" or'
             ' sys_platform == "darwin" and python_version < "3.3"'
         ),
+        # "extra" is a special marker that can have multiple values at the same time.
+        # Thus, "extra == 'a' and extra == 'b'" is not empty.
+        # Further, "extra == 'a' and extra != 'b'" cannot be simplified
+        # because it has the meaning "extra 'a' must and extra 'b' must not be active"
+        'extra == "a" and extra == "b"',
+        'extra == "a" and extra != "b"',
+        'extra != "a" and extra == "b"',
+        'extra != "a" and extra != "b"',
+        'extra == "a" and extra == "b" and extra != "c" and extra != "d"',
+        'extra == "a" or extra == "b"',
+        'extra == "a" or extra != "b"',
+        'extra != "a" or extra == "b"',
+        'extra != "a" or extra != "b"',
+        'extra == "a" or extra == "b" or extra != "c" or extra != "d"',
+        # String comparison markers
+        '"tegra" in platform_release',
+        '"tegra" not in platform_release',
+        '"tegra" in platform_release or "rpi-v8" in platform_release',
+        '"tegra" not in platform_release and "rpi-v8" not in platform_release',
     ],
 )
 def test_parse_marker(marker: str) -> None:
     assert str(parse_marker(marker)) == marker
+
+
+@pytest.mark.parametrize(
+    ("marker", "valid"),
+    [
+        ('platform_release != "4.9.253-tegra"', True),
+        ('python_version != "4.9.253-tegra"', False),
+    ],
+)
+def test_parse_marker_non_python_versions(marker: str, valid: bool) -> None:
+    if valid:
+        assert str(parse_marker(marker)) == marker
+    else:
+        with pytest.raises(InvalidMarkerError):
+            parse_marker(marker)
 
 
 @pytest.mark.parametrize(
@@ -97,6 +133,10 @@ def test_parse_marker(marker: str) -> None:
             "platform_machine",
             "!=aarch64, !=loongarch64",
         ),
+        ('"tegra" not in platform_release', "platform_release", "'tegra' not in"),
+        ('"rpi-v8" in platform_release', "platform_release", "'rpi-v8' in"),
+        ('"arm" not in platform_version', "platform_version", "'arm' not in"),
+        ('"arm" in platform_version', "platform_version", "'arm' in"),
     ],
 )
 def test_parse_single_marker(
@@ -131,11 +171,24 @@ def test_single_marker_intersect() -> None:
     assert str(intersection) == 'python_version >= "3.4" and python_version < "3.6"'
 
 
-def test_single_marker_intersect_compacts_constraints() -> None:
-    m = parse_marker('python_version < "3.6"')
+@pytest.mark.parametrize(
+    ("marker1", "marker2", "expected"),
+    [
+        ('python_version < "3.6"', 'python_version < "3.4"', 'python_version < "3.4"'),
+        (
+            'python_version >= "3.6"',
+            'python_version < "3.7"',
+            'python_version == "3.6"',
+        ),
+    ],
+)
+def test_single_marker_intersect_is_single_marker(
+    marker1: str, marker2: str, expected: str
+) -> None:
+    m = parse_marker(marker1)
 
-    intersection = m.intersect(parse_marker('python_version < "3.4"'))
-    assert str(intersection) == 'python_version < "3.4"'
+    intersection = m.intersect(parse_marker(marker2))
+    assert str(intersection) == expected
 
 
 def test_single_marker_intersect_with_multi() -> None:
@@ -199,6 +252,119 @@ def test_single_marker_not_in_python_intersection() -> None:
     assert str(intersection) == 'python_version not in "2.7, 3.0, 3.1, 3.2"'
 
 
+@pytest.mark.parametrize(
+    ("marker1", "marker2", "expected"),
+    [
+        # same value
+        ('extra == "a"', 'extra == "a"', 'extra == "a"'),
+        ('extra == "a"', 'extra != "a"', "<empty>"),
+        ('extra != "a"', 'extra == "a"', "<empty>"),
+        ('extra != "a"', 'extra != "a"', 'extra != "a"'),
+        # different values
+        ('extra == "a"', 'extra == "b"', 'extra == "a" and extra == "b"'),
+        ('extra == "a"', 'extra != "b"', 'extra == "a" and extra != "b"'),
+        ('extra != "a"', 'extra == "b"', 'extra != "a" and extra == "b"'),
+        ('extra != "a"', 'extra != "b"', 'extra != "a" and extra != "b"'),
+        # AtomicMultiMarker
+        (
+            'extra == "a" and extra == "b"',
+            'extra == "c"',
+            'extra == "a" and extra == "b" and extra == "c"',
+        ),
+        (
+            'extra != "a" and extra != "b"',
+            'extra != "c"',
+            'extra != "a" and extra != "b" and extra != "c"',
+        ),
+        (
+            'extra != "a" and extra != "b"',
+            'extra == "c"',
+            'extra != "a" and extra != "b" and extra == "c"',
+        ),
+        (
+            'extra == "a" and extra == "b"',
+            'extra != "c"',
+            'extra == "a" and extra == "b" and extra != "c"',
+        ),
+        (
+            'extra == "a" and extra == "b"',
+            'extra == "a" and extra == "b"',
+            'extra == "a" and extra == "b"',
+        ),
+        (
+            'extra == "a" and extra == "b"',
+            'extra == "b" and extra == "a"',
+            'extra == "a" and extra == "b"',
+        ),
+        (
+            'extra == "a" and extra == "b"',
+            'extra == "c" and extra != "d"',
+            'extra == "a" and extra == "b" and extra == "c" and extra != "d"',
+        ),
+        ('extra != "a" and extra != "b"', 'extra == "a"', "<empty>"),
+        ('extra != "a" and extra == "b"', 'extra == "a" and extra == "c"', "<empty>"),
+        (
+            'extra != "a" and extra != "b"',
+            'extra != "a"',
+            'extra != "a" and extra != "b"',
+        ),
+        (
+            'extra == "a" and extra != "b"',
+            'extra == "a"',
+            'extra == "a" and extra != "b"',
+        ),
+        # AtomicMarkerUnion
+        (
+            'extra == "a" or extra == "b"',
+            'extra == "c"',
+            '(extra == "a" or extra == "b") and extra == "c"',
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra != "c"',
+            '(extra == "a" or extra == "b") and extra != "c"',
+        ),
+        ('extra == "a" or extra == "b"', 'extra == "a"', 'extra == "a"'),
+        ('extra != "a" or extra == "b"', 'extra != "a"', 'extra != "a"'),
+        (
+            'extra == "a" or extra == "b"',
+            'extra != "a"',
+            'extra == "b" and extra != "a"',
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra == "a" or extra == "b"',
+            'extra == "a" or extra == "b"',
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra == "b" or extra == "a"',
+            'extra == "a" or extra == "b"',
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra == "a" or extra != "c"',
+            '(extra == "a" or extra == "b") and (extra == "a" or extra != "c")',
+        ),
+        # AtomicMultiMarker and AtomicMarkerUnion
+        (
+            'extra != "a" and extra != "b"',
+            'extra == "a" or extra == "b"',
+            "<empty>",
+        ),
+        (
+            'extra != "a" and extra != "b"',
+            'extra == "a" or extra == "c"',
+            'extra == "c" and extra != "a" and extra != "b"',
+        ),
+    ],
+)
+def test_single_marker_intersect_extras(
+    marker1: str, marker2: str, expected: str
+) -> None:
+    assert str(parse_marker(marker1).intersect(parse_marker(marker2))) == expected
+
+
 def test_single_marker_union() -> None:
     m = parse_marker('sys_platform == "darwin"')
 
@@ -241,6 +407,16 @@ def test_single_marker_union_is_any() -> None:
             'python_version > "3.6"',
             'python_version != "3.6"',
         ),
+        (
+            'python_version == "3.6"',
+            'python_version >= "3.7"',
+            'python_version >= "3.6"',
+        ),
+        (
+            'python_version <= "3.6"',
+            'python_version >= "3.7"',
+            "",
+        ),
     ],
 )
 def test_single_marker_union_is_single_marker(
@@ -259,8 +435,7 @@ def test_single_marker_union_with_multi() -> None:
         parse_marker('implementation_name == "cpython" and python_version >= "3.6"')
     )
     assert (
-        str(union)
-        == 'implementation_name == "cpython" and python_version >= "3.6" or'
+        str(union) == 'implementation_name == "cpython" and python_version >= "3.6" or'
         ' sys_platform == "darwin"'
     )
 
@@ -370,6 +545,123 @@ def test_single_marker_union_with_inverse() -> None:
     m = parse_marker('sys_platform == "darwin"')
     union = m.union(parse_marker('sys_platform != "darwin"'))
     assert union.is_any()
+
+
+@pytest.mark.parametrize(
+    ("marker1", "marker2", "expected"),
+    [
+        # same value
+        ('extra == "a"', 'extra == "a"', 'extra == "a"'),
+        ('extra == "a"', 'extra != "a"', ""),
+        ('extra != "a"', 'extra == "a"', ""),
+        ('extra != "a"', 'extra != "a"', 'extra != "a"'),
+        # different values
+        ('extra == "a"', 'extra == "b"', 'extra == "a" or extra == "b"'),
+        ('extra == "a"', 'extra != "b"', 'extra == "a" or extra != "b"'),
+        ('extra != "a"', 'extra == "b"', 'extra != "a" or extra == "b"'),
+        ('extra != "a"', 'extra != "b"', 'extra != "a" or extra != "b"'),
+        # AtomicMultiMarker
+        (
+            'extra == "a" and extra == "b"',
+            'extra == "c"',
+            'extra == "a" and extra == "b" or extra == "c"',
+        ),
+        (
+            'extra != "a" and extra != "b"',
+            'extra != "c"',
+            'extra != "a" and extra != "b" or extra != "c"',
+        ),
+        (
+            'extra != "a" and extra != "b"',
+            'extra == "c"',
+            'extra != "a" and extra != "b" or extra == "c"',
+        ),
+        (
+            'extra == "a" and extra == "b"',
+            'extra != "c"',
+            'extra == "a" and extra == "b" or extra != "c"',
+        ),
+        (
+            'extra == "a" and extra == "b"',
+            'extra == "a" and extra == "b"',
+            'extra == "a" and extra == "b"',
+        ),
+        (
+            'extra == "a" and extra == "b"',
+            'extra == "c" and extra != "d"',
+            'extra == "a" and extra == "b" or extra == "c" and extra != "d"',
+        ),
+        (
+            'extra != "a" and extra != "b"',
+            'extra == "a"',
+            'extra != "b" or extra == "a"',
+        ),
+        (
+            'extra != "a" and extra == "b"',
+            'extra == "a" and extra == "c"',
+            'extra != "a" and extra == "b" or extra == "a" and extra == "c"',
+        ),
+        (
+            'extra != "a" and extra != "b"',
+            'extra != "a"',
+            'extra != "a"',
+        ),
+        (
+            'extra == "a" and extra != "b"',
+            'extra == "a"',
+            'extra == "a"',
+        ),
+        # AtomicMarkerUnion
+        (
+            'extra == "a" or extra == "b"',
+            'extra == "c"',
+            'extra == "a" or extra == "b" or extra == "c"',
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra != "c"',
+            'extra == "a" or extra == "b" or extra != "c"',
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra == "a"',
+            'extra == "a" or extra == "b"',
+        ),
+        (
+            'extra != "a" or extra == "b"',
+            'extra != "a"',
+            'extra != "a" or extra == "b"',
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra != "a"',
+            "",
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra == "a" or extra == "b"',
+            'extra == "a" or extra == "b"',
+        ),
+        (
+            'extra == "a" or extra == "b"',
+            'extra == "a" or extra != "c"',
+            'extra == "a" or extra == "b" or extra != "c"',
+        ),
+        # AtomicMultiMarker and AtomicMarkerUnion
+        (
+            'extra != "a" and extra != "b"',
+            'extra == "a" or extra == "b"',
+            'extra != "a" and extra != "b" or extra == "a" or extra == "b"',
+        ),
+        (
+            'extra != "a" and extra != "b"',
+            'extra == "a" or extra == "c"',
+            'extra != "a" and extra != "b" or extra == "a" or extra == "c"',
+        ),
+    ],
+)
+def test_single_marker_union_extras(marker1: str, marker2: str, expected: str) -> None:
+    assert str(parse_marker(marker1).union(parse_marker(marker2))) == expected
 
 
 def test_multi_marker() -> None:
@@ -484,8 +776,7 @@ def test_multi_marker_union_multi() -> None:
 
     union = m.union(parse_marker('python_version >= "3.6" and os_name == "Windows"'))
     assert (
-        str(union)
-        == 'sys_platform == "darwin" and implementation_name == "cpython" '
+        str(union) == 'sys_platform == "darwin" and implementation_name == "cpython" '
         'or python_version >= "3.6" and os_name == "Windows"'
     )
 
@@ -534,35 +825,65 @@ def test_multi_marker_union_multi_is_multi(
         (
             'python_version >= "3.6" and python_full_version < "3.6.2"',
             'python_version >= "3.6" and python_version < "3.7"',
-            'python_version >= "3.6" and python_version < "3.7"',
+            'python_version == "3.6"',
+        ),
+        (
+            'python_version >= "3.6" and python_full_version < "3.7.2"',
+            'python_version >= "3.6" and python_version < "3.8"',
+            'python_version >= "3.6" and python_version < "3.8"',
         ),
         (
             'python_version > "3.6" and python_full_version < "3.6.2"',
             'python_version > "3.6" and python_version < "3.7"',
             'python_version > "3.6" and python_version < "3.7"',
         ),
+        (
+            'python_version > "3.6" and python_full_version < "3.7.2"',
+            'python_version > "3.6" and python_version < "3.8"',
+            'python_version > "3.6" and python_version < "3.8"',
+        ),
         # Ranges meet exactly
         (
             'python_version >= "3.6" and python_full_version < "3.6.2"',
             'python_full_version >= "3.6.2" and python_version < "3.7"',
-            'python_version >= "3.6" and python_version < "3.7"',
+            'python_version == "3.6"',
+        ),
+        (
+            'python_version >= "3.6" and python_full_version < "3.7.2"',
+            'python_full_version >= "3.6.2" and python_version < "3.8"',
+            'python_version >= "3.6" and python_version < "3.8"',
         ),
         (
             'python_version >= "3.6" and python_full_version <= "3.6.2"',
             'python_full_version > "3.6.2" and python_version < "3.7"',
-            'python_version >= "3.6" and python_version < "3.7"',
+            'python_version == "3.6"',
+        ),
+        (
+            'python_version >= "3.6" and python_full_version <= "3.7.2"',
+            'python_full_version > "3.6.2" and python_version < "3.8"',
+            'python_version >= "3.6" and python_version < "3.8"',
         ),
         # Ranges overlap
         (
             'python_version >= "3.6" and python_full_version <= "3.6.8"',
             'python_full_version >= "3.6.2" and python_version < "3.7"',
-            'python_version >= "3.6" and python_version < "3.7"',
+            'python_version == "3.6"',
+        ),
+        (
+            'python_version >= "3.6" and python_full_version <= "3.7.8"',
+            'python_full_version >= "3.6.2" and python_version < "3.8"',
+            'python_version >= "3.6" and python_version < "3.8"',
         ),
         # Ranges with same end.
         (
             'python_version >= "3.6" and python_version < "3.7"',
             'python_full_version >= "3.6.2" and python_version < "3.7"',
-            'python_version >= "3.6" and python_version < "3.7"',
+            'python_version == "3.6"',
+        ),
+        (
+            'python_version >= "3.6" and python_version < "3.8"',
+            'python_full_version >= "3.6.2" and python_version < "3.8"',
+            'python_version >= "3.6" and python_version < "3.8"',
         ),
         (
             'python_version >= "3.6" and python_version <= "3.7"',
@@ -672,9 +993,8 @@ def test_marker_union_intersect_single_marker() -> None:
 
     intersection = m.intersect(parse_marker('implementation_name == "cpython"'))
     assert (
-        str(intersection)
-        == 'sys_platform == "darwin" and implementation_name == "cpython" '
-        'or python_version < "3.4" and implementation_name == "cpython"'
+        str(intersection) == '(sys_platform == "darwin" or python_version < "3.4")'
+        ' and implementation_name == "cpython"'
     )
 
 
@@ -700,11 +1020,8 @@ def test_marker_union_intersect_marker_union() -> None:
         parse_marker('implementation_name == "cpython" or os_name == "Windows"')
     )
     assert (
-        str(intersection)
-        == 'sys_platform == "darwin" and implementation_name == "cpython" '
-        'or sys_platform == "darwin" and os_name == "Windows" or '
-        'python_version < "3.4" and implementation_name == "cpython" or '
-        'python_version < "3.4" and os_name == "Windows"'
+        str(intersection) == '(sys_platform == "darwin" or python_version < "3.4") and '
+        '(implementation_name == "cpython" or os_name == "Windows")'
     )
 
 
@@ -720,8 +1037,7 @@ def test_marker_union_intersect_marker_union_drops_unnecessary_markers() -> None
 
     intersection = m.intersect(m2)
     expected = (
-        'python_version >= "2.7" and python_version < "2.8" '
-        'or python_version >= "3.4" and python_version < "4.0"'
+        'python_version == "2.7" or python_version >= "3.4" and python_version < "4.0"'
     )
     assert str(intersection) == expected
 
@@ -732,18 +1048,16 @@ def test_marker_union_intersect_multi_marker() -> None:
 
     # Intersection isn't _quite_ symmetrical.
     expected1 = (
-        'sys_platform == "darwin" and implementation_name == "cpython" and os_name =='
-        ' "Windows" or python_version < "3.4" and implementation_name == "cpython" and'
-        ' os_name == "Windows"'
+        '(sys_platform == "darwin" or python_version < "3.4")'
+        ' and implementation_name == "cpython" and os_name == "Windows"'
     )
 
     intersection = m1.intersect(m2)
     assert str(intersection) == expected1
 
     expected2 = (
-        'implementation_name == "cpython" and os_name == "Windows" and sys_platform'
-        ' == "darwin" or implementation_name == "cpython" and os_name == "Windows"'
-        ' and python_version < "3.4"'
+        'implementation_name == "cpython" and os_name == "Windows"'
+        ' and (sys_platform == "darwin" or python_version < "3.4")'
     )
 
     intersection = m2.intersect(m1)
@@ -757,8 +1071,7 @@ def test_marker_union_union_with_union() -> None:
         parse_marker('implementation_name == "cpython" or os_name == "Windows"')
     )
     assert (
-        str(union)
-        == 'sys_platform == "darwin" or python_version < "3.4" '
+        str(union) == 'sys_platform == "darwin" or python_version < "3.4" '
         'or implementation_name == "cpython" or os_name == "Windows"'
     )
 
@@ -858,8 +1171,6 @@ def test_multi_marker_removes_duplicates() -> None:
             {"os_name": "other", "python_version": "2.7.4"},
             False,
         ),
-        ("extra == 'security'", {"extra": "quux"}, False),
-        ("extra == 'security'", {"extra": "security"}, True),
         (f"os.name == '{os.name}'", None, True),
         ("sys.platform == 'win32'", {"sys_platform": "linux2"}, False),
         ("platform.version in 'Ubuntu'", {"platform_version": "#39"}, False),
@@ -906,6 +1217,82 @@ def test_multi_marker_removes_duplicates() -> None:
             {"platform_machine": "x86_64"},
             False,
         ),
+        ('"tegra" in platform_release', {"platform_release": "5.10.120-tegra"}, True),
+        ('"tegra" in platform_release', {"platform_release": "5.10.120"}, False),
+        (
+            '"tegra" not in platform_release',
+            {"platform_release": "5.10.120-tegra"},
+            False,
+        ),
+        ('"tegra" not in platform_release', {"platform_release": "5.10.120"}, True),
+        (
+            "platform_machine == 'aarch64' and 'tegra' in platform_release",
+            {"platform_release": "5.10.120-tegra", "platform_machine": "aarch64"},
+            True,
+        ),
+        (
+            "platform_release != '4.9.253-tegra'",
+            {"platform_release": "4.9.254-tegra"},
+            True,
+        ),
+        (
+            "platform_release != '4.9.253-tegra'",
+            {"platform_release": "4.9.253"},
+            True,
+        ),
+        (
+            "platform_release >= '6.6.0+rpt-rpi-v8'",
+            {"platform_release": "6.6.20+rpt-rpi-v8"},
+            True,
+        ),
+        (
+            "platform_release < '5.10.123-tegra' and platform_release >= '4.9.254-tegra'",
+            {"platform_release": "4.9.254-tegra"},
+            True,
+        ),
+        # extras
+        # single extra
+        ("extra == 'security'", {"extra": "quux"}, False),
+        ("extra == 'security'", {"extra": "security"}, True),
+        ("extra != 'security'", {"extra": "quux"}, True),
+        ("extra != 'security'", {"extra": "security"}, False),
+        # normalization
+        ("extra == 'Security.1'", {"extra": "security-1"}, True),
+        # extra unknown
+        ("extra == 'a'", {}, True),
+        ("extra != 'a'", {}, True),
+        ("extra == 'a' and extra == 'b'", {}, True),
+        # extra explicitly not set
+        ("extra == 'a'", {"extra": ()}, False),
+        ("extra != 'b'", {"extra": ()}, True),
+        ("extra == 'a' and extra == 'b'", {"extra": ()}, False),
+        ("extra == 'a' or extra == 'b'", {"extra": ()}, False),
+        ("extra != 'a' and extra != 'b'", {"extra": ()}, True),
+        ("extra != 'a' or extra != 'b'", {"extra": ()}, True),
+        ("extra != 'a' and extra == 'b'", {"extra": ()}, False),
+        ("extra != 'a' or extra == 'b'", {"extra": ()}, True),
+        # multiple extras
+        ("extra == 'a'", {"extra": ("a", "b")}, True),
+        ("extra == 'a'", {"extra": ("b", "c")}, False),
+        ("extra != 'a'", {"extra": ("a", "b")}, False),
+        ("extra != 'a'", {"extra": ("b", "c")}, True),
+        ("extra == 'a' and extra == 'b'", {"extra": ("a", "b", "c")}, True),
+        ("extra == 'a' and extra == 'b'", {"extra": ("a", "c")}, False),
+        ("extra == 'a' or extra == 'b'", {"extra": ("a", "c")}, True),
+        ("extra == 'a' or extra == 'b'", {"extra": ("b", "c")}, True),
+        ("extra == 'a' or extra == 'b'", {"extra": ("c", "d")}, False),
+        ("extra != 'a' and extra != 'b'", {"extra": ("a", "c")}, False),
+        ("extra != 'a' and extra != 'b'", {"extra": ("b", "c")}, False),
+        ("extra != 'a' and extra != 'b'", {"extra": ("c", "d")}, True),
+        ("extra != 'a' or extra != 'b'", {"extra": ("a", "b", "c")}, False),
+        ("extra != 'a' or extra != 'b'", {"extra": ("a", "c")}, True),
+        ("extra != 'a' or extra != 'b'", {"extra": ("b", "c")}, True),
+        ("extra != 'a' and extra == 'b'", {"extra": ("a", "b")}, False),
+        ("extra != 'a' and extra == 'b'", {"extra": ("b", "c")}, True),
+        ("extra != 'a' and extra == 'b'", {"extra": ("c", "d")}, False),
+        ("extra != 'a' or extra == 'b'", {"extra": ("a", "b")}, True),
+        ("extra != 'a' or extra == 'b'", {"extra": ("c", "d")}, True),
+        ("extra != 'a' or extra == 'b'", {"extra": ("a", "c")}, False),
     ],
 )
 def test_validate(
@@ -959,7 +1346,7 @@ def test_parse_version_like_markers(marker: str, env: dict[str, str]) -> None:
                 'python_version >= "3.6" or extra == "foo" and implementation_name =='
                 ' "pypy" or extra == "bar"'
             ),
-            "",
+            'python_version >= "3.6" or implementation_name == "pypy"',
         ),
         ('extra == "foo"', ""),
         ('extra == "foo" or extra == "bar"', ""),
@@ -1015,6 +1402,15 @@ def test_without_extras(marker: str, expected: str) -> None:
             'extra == "foo" and python_version >= "3.6" or python_version >= "3.6"',
             "extra",
             'python_version >= "3.6"',
+        ),
+        (
+            (
+                'python_version >= "2.7" and (python_version < "2.8"'
+                ' or python_version >= "3.7") and python_version < "3.8"'
+                ' and extra == "foo"'
+            ),
+            "extra",
+            ('python_version == "2.7" or python_version == "3.7"'),
         ),
     ],
 )
@@ -1085,6 +1481,103 @@ def test_only(marker: str, only: list[str], expected: str) -> None:
     assert str(m.only(*only)) == expected
 
 
+@pytest.mark.parametrize(
+    ("marker", "constraint", "expected"),
+    [
+        ("", "~3.8", ""),
+        ("<empty>", "~3.8", "<empty>"),
+        ('sys_platform == "linux"', "~3.8", 'sys_platform == "linux"'),
+        ('python_version >= "3.8"', "~3.8", ""),
+        ('python_version == "3.8"', ">=3.8.7,<3.9.0", ""),
+        ('python_version == "3.8" or python_version >= "3.9"', ">=3.8.0,<4.0.0", ""),
+        ('python_version == "3.8" or python_version >= "3.9"', ">=3.8.7,<4.0.0", ""),
+        ('python_version > "3.7"', "~3.8", ""),
+        ('python_version > "3.8"', "~3.8", "<empty>"),
+        ('python_version >= "3.8"', "~3.8", ""),
+        ('python_version >= "3.9"', "~3.8", "<empty>"),
+        ('python_full_version >= "3.8.0"', "~3.8", ""),
+        ('python_full_version >= "3.8.1"', "~3.8", 'python_full_version >= "3.8.1"'),
+        ('python_full_version < "3.8.0"', "~3.8", "<empty>"),
+        ('python_version >= "3.8" and python_version < "3.9"', "~3.8", ""),
+        ('python_version >= "3.7" and python_version < "4.0"', "~3.8", ""),
+        (
+            'python_full_version >= "3.8.1" and python_version < "3.9"',
+            "~3.8",
+            'python_full_version >= "3.8.1"',
+        ),
+        (
+            'python_version >= "3.8" and python_full_version < "3.8.2"',
+            "~3.8",
+            'python_full_version < "3.8.2"',
+        ),
+        (
+            'python_version >= "3.8" and sys_platform == "linux" and python_version < "3.9"',
+            "~3.8",
+            'sys_platform == "linux"',
+        ),
+        ('python_version < "3.8" or python_version >= "3.9"', "~3.9", ""),
+        (
+            'python_version < "3.8" or python_version >= "3.9"',
+            ">=3.7",
+            'python_version < "3.8" or python_version >= "3.9"',
+        ),
+        ('python_version < "3.8" or python_version >= "3.9"', "~3.7", ""),
+        (
+            'python_version < "3.8" or python_version >= "3.9"',
+            "<=3.10",
+            'python_version < "3.8" or python_version >= "3.9"',
+        ),
+        (
+            (
+                'python_version < "3.8"'
+                ' or python_version >= "3.9" and sys_platform == "linux"'
+            ),
+            "~3.9",
+            'sys_platform == "linux"',
+        ),
+        ('python_version < "3.8" or python_version >= "3.9"', "~3.7 || ~3.9", ""),
+        (
+            'python_version < "3.8" or python_version >= "3.9"',
+            "~3.6 || ~3.8",
+            'python_version < "3.8"',
+        ),
+        (
+            (
+                'python_version < "3.8" or sys_platform == "linux"'
+                ' or python_version >= "3.9"'
+            ),
+            "~3.7 || ~3.9",
+            'sys_platform == "linux"',
+        ),
+        (
+            (
+                'python_version < "3.8" or sys_platform == "linux"'
+                ' or python_version >= "3.9" or sys_platform == "win32"'
+            ),
+            "~3.7 || ~3.9",
+            'sys_platform == "linux" or sys_platform == "win32"',
+        ),
+        (
+            'python_version == "3.8" or sys_platform == "linux" or python_version >= "3.9"',
+            ">=3.8.0,<4.0.0",
+            'sys_platform == "linux"',
+        ),
+        (
+            'python_version == "3.8" or sys_platform == "linux" or python_version >= "3.9"',
+            ">=3.8.7,<4.0.0",
+            'sys_platform == "linux"',
+        ),
+    ],
+)
+def test_reduce_by_python_constraint(
+    marker: str, constraint: str, expected: str
+) -> None:
+    m = parse_marker(marker)
+    c = parse_version_constraint(constraint)
+
+    assert str(m.reduce_by_python_constraint(c)) == expected
+
+
 def test_union_of_a_single_marker_is_the_single_marker() -> None:
     union = MarkerUnion.of(SingleMarker("python_version", ">= 2.7"))
 
@@ -1127,6 +1620,8 @@ def test_union_of_multi_with_a_containing_single() -> None:
             'python_full_version ~= "3.6.3"',
             'python_full_version < "3.6.3" or python_full_version >= "3.7.0"',
         ),
+        ('"tegra" in platform_release', '"tegra" not in platform_release'),
+        ('"tegra" not in platform_release', '"tegra" in platform_release'),
     ],
 )
 def test_invert(marker: str, inverse: str) -> None:
@@ -1606,8 +2101,8 @@ def test_complex_union() -> None:
     ]
     assert (
         str(union(*markers))
-        == 'platform_system == "Darwin" and platform_machine == "arm64"'
-        ' and python_version >= "3.6" or python_version >= "3.10"'
+        == 'python_version >= "3.6" and platform_system == "Darwin"'
+        ' and platform_machine == "arm64" or python_version >= "3.10"'
     )
 
 
@@ -1639,8 +2134,8 @@ def test_complex_intersection() -> None:
     ]
     assert (
         str(dnf(intersection(*markers).invert()))
-        == 'platform_system == "Darwin" and platform_machine == "arm64"'
-        ' and python_version >= "3.6" or python_version >= "3.10"'
+        == 'python_version >= "3.6" and platform_system == "Darwin"'
+        ' and platform_machine == "arm64" or python_version >= "3.10"'
     )
 
 
@@ -1686,20 +2181,43 @@ def test_intersection_avoids_combinatorial_explosion() -> None:
     )
     assert (
         str(m1.intersect(m2))
-        == 'python_full_version >= "3.11.0" and python_full_version < "4.0.0"'
+        == 'python_version >= "3.11" and python_full_version < "4.0.0"'
         ' and (platform_machine == "aarch64" or platform_machine == "ppc64le"'
         ' or platform_machine == "x86_64" or platform_machine == "amd64"'
         ' or platform_machine == "AMD64" or platform_machine == "win32"'
         ' or platform_machine == "WIN32")'
     )
     assert (
-        str(m2.intersect(m1))
-        == 'python_full_version >= "3.11.0"'
+        str(m2.intersect(m1)) == 'python_version >= "3.11"'
         ' and (platform_machine == "aarch64" or platform_machine == "ppc64le"'
         ' or platform_machine == "x86_64" or platform_machine == "amd64"'
         ' or platform_machine == "AMD64" or platform_machine == "win32"'
         ' or platform_machine == "WIN32") and python_full_version < "4.0.0"'
     )
+
+
+def test_intersection_no_endless_recursion() -> None:
+    m1 = parse_marker(
+        '(python_version < "3.9" or extra != "bigquery" and extra != "parquet"'
+        ' and extra != "motherduck" and extra != "athena" and extra != "synapse"'
+        ' and extra != "clickhouse" and extra != "dremio" and extra != "lancedb"'
+        ' and extra != "deltalake" and extra != "pyiceberg"'
+        ' and python_version < "3.13") and extra != "postgres" and extra != "redshift"'
+        ' and extra != "postgis"'
+    )
+    m2 = parse_marker(
+        'python_version > "3.12" and python_version < "3.13" or extra != "databricks"'
+    )
+    expected = (
+        '(python_version < "3.9" or extra != "bigquery" and extra != "parquet"'
+        ' and extra != "motherduck" and extra != "athena" and extra != "synapse"'
+        ' and extra != "clickhouse" and extra != "dremio" and extra != "lancedb"'
+        ' and extra != "deltalake" and extra != "pyiceberg")'
+        ' and python_version < "3.13" and extra != "postgres" and extra != "redshift"'
+        ' and extra != "postgis" and (python_version > "3.12"'
+        ' and python_version < "3.13" or extra != "databricks")'
+    )
+    assert str(m1.intersect(m2)) == expected
 
 
 @pytest.mark.parametrize(
@@ -1777,20 +2295,20 @@ def test_intersection_avoids_combinatorial_explosion() -> None:
         ('== "3.6"', '> "3.5.2"', '== "3.6"', '> "3.5.2"'),
         ('== "3.6"', '>= "3.5.2"', '== "3.6"', '>= "3.5.2"'),
         ('== "3.6"', '!= "3.5.2"', '== "3.6"', '!= "3.5.2"'),
-        ('== "3.6"', '< "3.6.0"', EMPTY, '< "3.7.0"'),
-        ('== "3.6"', '<= "3.6.0"', '== "3.6.0"', '< "3.7.0"'),
-        ('== "3.6"', '> "3.6.0"', None, '>= "3.6.0"'),
-        ('== "3.6"', '>= "3.6.0"', '== "3.6"', '>= "3.6.0"'),
+        ('== "3.6"', '< "3.6.0"', EMPTY, '< "3.7"'),
+        ('== "3.6"', '<= "3.6.0"', '== "3.6.0"', '< "3.7"'),
+        ('== "3.6"', '> "3.6.0"', None, '>= "3.6"'),
+        ('== "3.6"', '>= "3.6.0"', '== "3.6"', '>= "3.6"'),
         ('== "3.6"', '!= "3.6.0"', None, ""),
-        ('== "3.6"', '< "3.6.1"', None, '< "3.7.0"'),
-        ('== "3.6"', '<= "3.6.1"', None, '< "3.7.0"'),
-        ('== "3.6"', '> "3.6.1"', None, '>= "3.6.0"'),
-        ('== "3.6"', '>= "3.6.1"', None, '>= "3.6.0"'),
+        ('== "3.6"', '< "3.6.1"', None, '< "3.7"'),
+        ('== "3.6"', '<= "3.6.1"', None, '< "3.7"'),
+        ('== "3.6"', '> "3.6.1"', None, '>= "3.6"'),
+        ('== "3.6"', '>= "3.6.1"', None, '>= "3.6"'),
         ('== "3.6"', '!= "3.6.1"', None, ""),
-        ('== "3.6"', '< "3.7.0"', '== "3.6"', '< "3.7.0"'),
+        ('== "3.6"', '< "3.7.0"', '== "3.6"', '< "3.7"'),
         ('== "3.6"', '<= "3.7.0"', '== "3.6"', '<= "3.7.0"'),
         ('== "3.6"', '> "3.7.0"', EMPTY, None),
-        ('== "3.6"', '>= "3.7.0"', EMPTY, '>= "3.6.0"'),
+        ('== "3.6"', '>= "3.7.0"', EMPTY, '>= "3.6"'),
         ('== "3.6"', '!= "3.7.0"', '== "3.6"', '!= "3.7.0"'),
         ('== "3.6"', '<= "3.7.1"', '== "3.6"', '<= "3.7.1"'),
         ('== "3.6"', '< "3.7.1"', '== "3.6"', '< "3.7.1"'),
@@ -1804,20 +2322,20 @@ def test_intersection_avoids_combinatorial_explosion() -> None:
         ('!= "3.6"', '> "3.5.2"', None, ""),
         ('!= "3.6"', '>= "3.5.2"', None, ""),
         ('!= "3.6"', '!= "3.5.2"', None, ""),
-        ('!= "3.6"', '< "3.6.0"', '< "3.6.0"', '!= "3.6"'),
-        ('!= "3.6"', '<= "3.6.0"', '< "3.6.0"', None),
-        ('!= "3.6"', '> "3.6.0"', '>= "3.7.0"', '!= "3.6.0"'),
-        ('!= "3.6"', '>= "3.6.0"', '>= "3.7.0"', ""),
+        ('!= "3.6"', '< "3.6.0"', '< "3.6"', '!= "3.6"'),
+        ('!= "3.6"', '<= "3.6.0"', '< "3.6"', None),
+        ('!= "3.6"', '> "3.6.0"', '>= "3.7"', '!= "3.6.0"'),
+        ('!= "3.6"', '>= "3.6.0"', '>= "3.7"', ""),
         ('!= "3.6"', '!= "3.6.0"', '!= "3.6"', '!= "3.6.0"'),
-        ('!= "3.6"', '< "3.6.1"', '< "3.6.0"', None),
-        ('!= "3.6"', '<= "3.6.1"', '< "3.6.0"', None),
-        ('!= "3.6"', '> "3.6.1"', '>= "3.7.0"', None),
-        ('!= "3.6"', '>= "3.6.1"', '>= "3.7.0"', None),
+        ('!= "3.6"', '< "3.6.1"', '< "3.6"', None),
+        ('!= "3.6"', '<= "3.6.1"', '< "3.6"', None),
+        ('!= "3.6"', '> "3.6.1"', '>= "3.7"', None),
+        ('!= "3.6"', '>= "3.6.1"', '>= "3.7"', None),
         ('!= "3.6"', '!= "3.6.1"', '!= "3.6"', '!= "3.6.1"'),
-        ('!= "3.6"', '< "3.7.0"', '< "3.6.0"', ""),
+        ('!= "3.6"', '< "3.7.0"', '< "3.6"', ""),
         ('!= "3.6"', '<= "3.7.0"', None, ""),
         ('!= "3.6"', '> "3.7.0"', '> "3.7.0"', '!= "3.6"'),
-        ('!= "3.6"', '>= "3.7.0"', '>= "3.7.0"', '!= "3.6"'),
+        ('!= "3.6"', '>= "3.7.0"', '>= "3.7"', '!= "3.6"'),
         ('!= "3.6"', '!= "3.7.0"', None, ""),
         ('!= "3.6"', '<= "3.7.1"', None, ""),
         ('!= "3.6"', '< "3.7.1"', None, ""),

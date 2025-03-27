@@ -56,6 +56,16 @@ def test_dependency_from_pep_508_with_extras() -> None:
     assert str(dep.marker) == 'extra == "foo" or extra == "bar"'
 
 
+def test_dependency_from_pep_508_with_extra_and_inverse_extra() -> None:
+    name = 'requests==2.18.0; extra != "foo" and extra == "bar"'
+    dep = Dependency.create_from_pep_508(name)
+
+    assert dep.name == "requests"
+    assert str(dep.constraint) == "2.18.0"
+    assert dep.in_extras == ["bar"]
+    assert str(dep.marker) == 'extra != "foo" and extra == "bar"'
+
+
 def test_dependency_from_pep_508_with_python_version() -> None:
     name = 'requests (==2.18.0); python_version == "2.7" or python_version == "2.6"'
     dep = Dependency.create_from_pep_508(name)
@@ -103,8 +113,7 @@ def test_dependency_from_pep_508_complex() -> None:
     assert dep.in_extras == ["foo"]
     assert dep.python_versions == ">=2.7 !=3.2.*"
     assert (
-        str(dep.marker)
-        == 'python_version >= "2.7" and python_version != "3.2" '
+        str(dep.marker) == 'python_version >= "2.7" and python_version != "3.2" '
         'and (sys_platform == "win32" or sys_platform == "darwin") '
         'and extra == "foo"'
     )
@@ -167,12 +176,8 @@ def test_dependency_from_pep_508_with_python_version_union_of_multi() -> None:
     assert dep.name == "requests"
     assert str(dep.constraint) == "2.18.0"
     assert dep.extras == frozenset()
-    assert dep.python_versions == ">=2.7 <2.8 || >=3.4 <3.5"
-    assert (
-        str(dep.marker)
-        == 'python_version >= "2.7" and python_version < "2.8" '
-        'or python_version >= "3.4" and python_version < "3.5"'
-    )
+    assert dep.python_versions == "~2.7 || ~3.4"
+    assert str(dep.marker) == 'python_version == "2.7" or python_version == "3.4"'
 
 
 def test_dependency_from_pep_508_with_not_in_op_marker() -> None:
@@ -286,15 +291,14 @@ def test_dependency_from_pep_508_with_python_full_version() -> None:
     assert dep.name == "requests"
     assert str(dep.constraint) == "2.18.0"
     assert dep.extras == frozenset()
-    assert dep.python_versions == ">=2.7 <2.8 || >=3.4.0 <3.5.4"
+    assert dep.python_versions == "~2.7 || >=3.4.0 <3.5.4"
     assert (
-        str(dep.marker)
-        == 'python_version >= "2.7" and python_version < "2.8" '
+        str(dep.marker) == 'python_version == "2.7" '
         'or python_full_version >= "3.4.0" and python_full_version < "3.5.4"'
     )
 
 
-def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_release_astrix() -> (  # noqa: E501
+def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_release_astrix() -> (
     None
 ):
     name = 'pathlib2 ; python_version == "3.4.*" or python_version < "3"'
@@ -305,7 +309,7 @@ def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_rele
     assert dep.python_versions == "==3.4.* || <3"
 
 
-def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_release_tilde() -> (  # noqa: E501
+def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_release_tilde() -> (
     None
 ):
     name = 'pathlib2 ; python_version ~= "3.4" or python_version < "3"'
@@ -316,7 +320,7 @@ def test_dependency_from_pep_508_with_python_full_version_pep440_compatible_rele
     assert dep.python_versions == "~=3.4 || <3"
 
 
-def test_dependency_from_pep_508_should_not_produce_empty_constraints_for_correct_markers() -> (  # noqa: E501
+def test_dependency_from_pep_508_should_not_produce_empty_constraints_for_correct_markers() -> (
     None
 ):
     name = (

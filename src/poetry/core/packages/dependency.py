@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import warnings
 
 from contextlib import suppress
 from pathlib import Path
@@ -23,6 +22,7 @@ from poetry.core.version.markers import parse_marker
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from collections.abc import Sequence
 
     from packaging.utils import NormalizedName
 
@@ -41,7 +41,7 @@ class Dependency(PackageSpecification):
         constraint: str | VersionConstraint,
         optional: bool = False,
         groups: Iterable[str] | None = None,
-        allows_prereleases: bool = False,
+        allows_prereleases: bool | None = None,
         extras: Iterable[str] | None = None,
         source_type: str | None = None,
         source_url: str | None = None,
@@ -61,6 +61,9 @@ class Dependency(PackageSpecification):
             features=extras,
         )
 
+        # Attributes must be immutable for clone() to be safe!
+        # (For performance reasons, clone only creates a copy instead of a deep copy).
+
         self._constraint: VersionConstraint
         self._pretty_constraint: str
         self.constraint = constraint  # type: ignore[assignment]
@@ -72,14 +75,14 @@ class Dependency(PackageSpecification):
 
         self._groups = frozenset(groups)
         self._allows_prereleases = allows_prereleases
+        # "_develop" is only required for enriching [project] dependencies
+        self._develop = False
 
         self._python_versions = "*"
         self._python_constraint = parse_constraint("*")
-        self._transitive_python_versions: str | None = None
-        self._transitive_python_constraint: VersionConstraint | None = None
         self._transitive_marker: BaseMarker | None = None
 
-        self._in_extras: list[NormalizedName] = []
+        self._in_extras: Sequence[NormalizedName] = []
 
         self._activated = not self._optional
 
@@ -103,15 +106,6 @@ class Dependency(PackageSpecification):
             self._constraint = constraint
 
         self._pretty_constraint = str(constraint)
-
-    def set_constraint(self, constraint: str | VersionConstraint) -> None:
-        warnings.warn(
-            "Calling method 'set_constraint' is deprecated and will be removed. "
-            "It has been replaced by the property 'constraint' for consistency.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.constraint = constraint  # type: ignore[assignment]
 
     @property
     def pretty_constraint(self) -> str:
@@ -141,18 +135,6 @@ class Dependency(PackageSpecification):
             )
 
     @property
-    def transitive_python_versions(self) -> str:
-        if self._transitive_python_versions is None:
-            return self._python_versions
-
-        return self._transitive_python_versions
-
-    @transitive_python_versions.setter
-    def transitive_python_versions(self, value: str) -> None:
-        self._transitive_python_versions = value
-        self._transitive_python_constraint = parse_constraint(value)
-
-    @property
     def marker(self) -> BaseMarker:
         return self._marker
 
@@ -174,13 +156,18 @@ class Dependency(PackageSpecification):
             # If we have extras, the dependency is optional
             self.deactivate()
 
+            new_in_extras = []
             for or_ in markers["extra"]:
                 for op, extra in or_:
                     if op == "==":
-                        self.in_extras.append(canonicalize_name(extra))
-                    elif op == "" and "||" in extra:
-                        for _extra in extra.split(" || "):
-                            self.in_extras.append(canonicalize_name(_extra))
+                        new_in_extras.append(canonicalize_name(extra))
+                    elif op == "" and ("||" in extra or "," in extra):
+                        sep = "||" if "||" in extra else ","
+                        extra_values = [e.strip() for e in extra.split(sep)]
+                        for _extra in extra_values:
+                            if not _extra.startswith("!="):
+                                new_in_extras.append(canonicalize_name(_extra))
+            self._in_extras = [*self._in_extras, *new_in_extras]
 
         # Recalculate python versions.
         self._python_versions = "*"
@@ -208,19 +195,12 @@ class Dependency(PackageSpecification):
         return self._python_constraint
 
     @property
-    def transitive_python_constraint(self) -> VersionConstraint:
-        if self._transitive_python_constraint is None:
-            return self._python_constraint
-
-        return self._transitive_python_constraint
-
-    @property
     def extras(self) -> frozenset[NormalizedName]:
         # extras activated in a dependency is the same as features
         return self._features
 
     @property
-    def in_extras(self) -> list[NormalizedName]:
+    def in_extras(self) -> Sequence[NormalizedName]:
         return self._in_extras
 
     @property
@@ -228,11 +208,7 @@ class Dependency(PackageSpecification):
         from poetry.core.constraints.version import Version
         from poetry.core.constraints.version import VersionUnion
 
-        requirement = self.pretty_name
-
-        if self.extras:
-            extras = ",".join(sorted(self.extras))
-            requirement += f"[{extras}]"
+        requirement = self.complete_pretty_name
 
         constraint = self.constraint
         if isinstance(constraint, VersionUnion):
@@ -260,7 +236,14 @@ class Dependency(PackageSpecification):
     def base_pep_508_name_resolved(self) -> str:
         return self.base_pep_508_name
 
-    def allows_prereleases(self) -> bool:
+    def allows_prereleases(self) -> bool | None:
+        """
+        None (default): only use pre-release versions
+                        if no stable version satisfies the constraint
+        False: do not allow pre-release versions
+               even if this means there is no solution
+        True: do not distinguish between stable and pre-release versions
+        """
         return self._allows_prereleases
 
     def is_optional(self) -> bool:
@@ -357,6 +340,7 @@ class Dependency(PackageSpecification):
         """
         from poetry.core.packages.url_dependency import URLDependency
         from poetry.core.packages.utils.link import Link
+        from poetry.core.packages.utils.utils import cached_is_dir
         from poetry.core.packages.utils.utils import is_archive_file
         from poetry.core.packages.utils.utils import is_python_project
         from poetry.core.packages.utils.utils import is_url
@@ -366,7 +350,7 @@ class Dependency(PackageSpecification):
         from poetry.core.packages.vcs_dependency import VCSDependency
         from poetry.core.utils.patterns import wheel_file_re
         from poetry.core.vcs.git import ParsedUrl
-        from poetry.core.version.requirements import Requirement
+        from poetry.core.version.requirements import parse_requirement
 
         # Removing comments
         parts = name.split(" #", 1)
@@ -376,7 +360,7 @@ class Dependency(PackageSpecification):
             if " ;" in rest:
                 name += " ;" + rest.split(" ;", 1)[1]
 
-        req = Requirement(name)
+        req = parse_requirement(name)
 
         name = req.name
         link = None
@@ -386,13 +370,12 @@ class Dependency(PackageSpecification):
         elif req.url:
             link = Link(req.url)
         else:
-            path_str = os.path.normpath(os.path.abspath(name))
+            path_str = os.path.normpath(os.path.abspath(name))  # noqa: PTH100
             p, extras = strip_extras(path_str)
-            if os.path.isdir(p) and (os.path.sep in name or name.startswith(".")):
+            if cached_is_dir(p) and (os.path.sep in name or name.startswith(".")):
                 if not is_python_project(Path(name)):
                     raise ValueError(
-                        f"Directory {name!r} is not installable. File 'setup.[py|cfg]' "
-                        "not found."
+                        f"Directory {name!r} is not installable. Not a Python project."
                     )
                 link = Link(path_to_url(p))
             elif is_archive_file(p):
@@ -512,27 +495,35 @@ def _make_file_or_dir_dep(
     path: Path,
     base: Path | None = None,
     subdirectory: str | None = None,
-    extras: list[str] | None = None,
+    extras: Iterable[str] | None = None,
 ) -> FileDependency | DirectoryDependency | None:
     """
     Helper function to create a file or directoru dependency with the given arguments.
-    If path is not a file or directory that exists, `None` is returned.
+
+    If path is not a file or directory that exists, a guess is made based on the suffix
+    of the given path. This is done to prevent dependendencies from being parsed as normal
+    dependencies. This allows for downstream error handling.
+
+    See also: poetry#10068
     """
     from poetry.core.packages.directory_dependency import DirectoryDependency
     from poetry.core.packages.file_dependency import FileDependency
 
     _path = path
+
     if not path.is_absolute() and base:
         # a base path was specified, so we should respect that
         _path = Path(base) / path
 
-    if _path.is_file():
+    # we check if it is a file (if it exists) or rely on suffix to guess
+    is_file = _path.is_file() if _path.exists() else path.suffix != ""
+
+    if is_file:
         return FileDependency(
             name, path, base=base, directory=subdirectory, extras=extras
         )
-    elif _path.is_dir():
-        if subdirectory:
-            path = path / subdirectory
-        return DirectoryDependency(name, path, base=base, extras=extras)
 
-    return None
+    if subdirectory:
+        path = path / subdirectory
+
+    return DirectoryDependency(name, path, base=base, extras=extras)

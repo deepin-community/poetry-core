@@ -66,7 +66,7 @@ class VersionUnion(VersionConstraint):
             if not isinstance(constraint, VersionRangeConstraint):
                 raise ValueError(f"Unknown VersionConstraint type {constraint}.")
 
-        flattened.sort()
+        flattened.sort()  # type: ignore[call-overload]
 
         merged: list[VersionRangeConstraint] = []
         for constraint in flattened:
@@ -94,6 +94,9 @@ class VersionUnion(VersionConstraint):
 
     def is_simple(self) -> bool:
         return self.excludes_single_version
+
+    def has_upper_bound(self) -> bool:
+        return all(constraint.has_upper_bound() for constraint in self._ranges)
 
     def allows(self, version: Version) -> bool:
         if self.excludes_single_version:

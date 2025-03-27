@@ -7,6 +7,7 @@ Full reference and more details is here:
 https://web.archive.org/web/20190616123959/http://www.bramvandersanden.com/post/2014/06/shared-packed-parse-forest/
 """
 
+from typing import Type, AbstractSet
 from random import randint
 from collections import deque
 from operator import attrgetter
@@ -15,7 +16,7 @@ from functools import partial
 
 from ..parse_tree_builder import AmbiguousIntermediateExpander
 from ..visitors import Discard
-from ..utils import logger
+from ..utils import logger, OrderedSet
 from ..tree import Tree
 
 class ForestNode:
@@ -37,27 +38,27 @@ class SymbolNode(ForestNode):
 
     Parameters:
         s: A Symbol, or a tuple of (rule, ptr) for an intermediate node.
-        start: The index of the start of the substring matched by this symbol (inclusive).
-        end: The index of the end of the substring matched by this symbol (exclusive).
+        start: For dynamic lexers, the index of the start of the substring matched by this symbol (inclusive).
+        end: For dynamic lexers, the index of the end of the substring matched by this symbol (exclusive).
 
     Properties:
         is_intermediate: True if this node is an intermediate node.
         priority: The priority of the node's symbol.
     """
-    __slots__ = ('s', 'start', 'end', '_children', 'paths', 'paths_loaded', 'priority', 'is_intermediate', '_hash')
+    Set: Type[AbstractSet] = set   # Overridden by StableSymbolNode
+    __slots__ = ('s', 'start', 'end', '_children', 'paths', 'paths_loaded', 'priority', 'is_intermediate')
     def __init__(self, s, start, end):
         self.s = s
         self.start = start
         self.end = end
-        self._children = set()
-        self.paths = set()
+        self._children = self.Set()
+        self.paths = self.Set()
         self.paths_loaded = False
 
         ### We use inf here as it can be safely negated without resorting to conditionals,
         #   unlike None or float('NaN'), and sorts appropriately.
         self.priority = float('-inf')
         self.is_intermediate = isinstance(s, tuple)
-        self._hash = hash((self.s, self.start, self.end))
 
     def add_family(self, lr0, rule, start, left, right):
         self._children.add(PackedNode(self, lr0, rule, start, left, right))
@@ -68,7 +69,7 @@ class SymbolNode(ForestNode):
     def load_paths(self):
         for transitive, node in self.paths:
             if transitive.next_titem is not None:
-                vn = SymbolNode(transitive.next_titem.s, transitive.next_titem.start, self.end)
+                vn = type(self)(transitive.next_titem.s, transitive.next_titem.start, self.end)
                 vn.add_path(transitive.next_titem, node)
                 self.add_family(transitive.reduction.rule.origin, transitive.reduction.rule, transitive.reduction.start, transitive.reduction.node, vn)
             else:
@@ -91,14 +92,6 @@ class SymbolNode(ForestNode):
     def __iter__(self):
         return iter(self._children)
 
-    def __eq__(self, other):
-        if not isinstance(other, SymbolNode):
-            return False
-        return self is other or (type(self.s) == type(other.s) and self.s == other.s and self.start == other.start and self.end is other.end)
-
-    def __hash__(self):
-        return self._hash
-
     def __repr__(self):
         if self.is_intermediate:
             rule = self.s[0]
@@ -109,6 +102,10 @@ class SymbolNode(ForestNode):
         else:
             symbol = self.s.name
         return "({}, {}, {}, {})".format(symbol, self.start, self.end, self.priority)
+
+class StableSymbolNode(SymbolNode):
+    "A version of SymbolNode that uses OrderedSet for output stability"
+    Set = OrderedSet
 
 class PackedNode(ForestNode):
     """
@@ -612,9 +609,10 @@ class ForestToParseTree(ForestTransformer):
                 children.append(data.left)
         if data.right is not PackedData.NO_DATA:
             children.append(data.right)
-        if node.parent.is_intermediate:
-            return self._cache.setdefault(id(node), children)
-        return self._cache.setdefault(id(node), self._call_rule_func(node, children))
+        transformed = children if node.parent.is_intermediate else self._call_rule_func(node, children)
+        if self._use_cache:
+            self._cache[id(node)] = transformed
+        return transformed
 
     def visit_symbol_node_in(self, node):
         super(ForestToParseTree, self).visit_symbol_node_in(node)

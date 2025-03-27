@@ -119,7 +119,7 @@ def test_to_pep_508_in_extras() -> None:
     dependency = VCSDependency(
         "poetry", "git", "https://github.com/python-poetry/poetry.git"
     )
-    dependency.in_extras.append(canonicalize_name("foo"))
+    dependency._in_extras = [canonicalize_name("foo")]
 
     expected = (
         'poetry @ git+https://github.com/python-poetry/poetry.git ; extra == "foo"'
@@ -129,7 +129,7 @@ def test_to_pep_508_in_extras() -> None:
     dependency = VCSDependency(
         "poetry", "git", "https://github.com/python-poetry/poetry.git", extras=["bar"]
     )
-    dependency.in_extras.append(canonicalize_name("foo"))
+    dependency._in_extras = [canonicalize_name("foo")]
 
     expected = (
         'poetry[bar] @ git+https://github.com/python-poetry/poetry.git ; extra == "foo"'
@@ -140,7 +140,7 @@ def test_to_pep_508_in_extras() -> None:
     dependency = VCSDependency(
         "poetry", "git", "https://github.com/python-poetry/poetry.git", "b;ar;"
     )
-    dependency.in_extras.append(canonicalize_name("foo;"))
+    dependency._in_extras = [canonicalize_name("foo;")]
 
     expected = (
         "poetry @ git+https://github.com/python-poetry/poetry.git@b;ar; ; extra =="
@@ -229,3 +229,21 @@ def test_vcs_dependencies_are_equal_if_resolved_references_match() -> None:
     )
 
     assert dependency1 == dependency2
+
+
+@pytest.mark.parametrize(
+    "source_url,normalized_url",
+    [
+        ("https://github.com/demo/demo.git", "https://github.com/demo/demo.git"),
+        ("git@github.com:demo/demo.git", "ssh://git@github.com/demo/demo.git"),
+    ],
+)
+def test_vcs_source_is_normalized(source_url: str, normalized_url: str) -> None:
+    dependency = VCSDependency(
+        name="demo",
+        vcs="git",
+        source=source_url,
+        branch="main",
+    )
+    assert dependency.source == normalized_url
+    assert dependency.source_url == normalized_url

@@ -17,4 +17,4 @@ override_dh_auto_install:
 	find debian -type f -name "vendor.txt" -delete
 	find debian -type f -name "*COPYING*" -delete
 	# this is from tests
-	find . -name "*extended*" -type d -exec rm  -rf {} +
+	#find . -name "*extended*" -type d -exec rm  -rf {} +
