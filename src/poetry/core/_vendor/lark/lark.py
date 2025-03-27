@@ -12,14 +12,11 @@ if TYPE_CHECKING:
     from .parsers.lalr_interactive_parser import InteractiveParser
     from .tree import ParseTree
     from .visitors import Transformer
-    if sys.version_info >= (3, 8):
-        from typing import Literal
-    else:
-        from typing_extensions import Literal
+    from typing import Literal
     from .parser_frontends import ParsingFrontend
 
 from .exceptions import ConfigurationError, assert_config, UnexpectedInput
-from .utils import Serialize, SerializeMemoizer, FS, isascii, logger
+from .utils import Serialize, SerializeMemoizer, FS, logger
 from .load_grammar import load_grammar, FromPackageLoader, Grammar, verify_used_files, PackageResource, sha256_digest
 from .tree import Tree
 from .common import LexerConf, ParserConf, _ParserArgType, _LexerArgType
@@ -62,7 +59,7 @@ class LarkOptions(Serialize):
     regex: bool
     g_regex_flags: int
     keep_all_tokens: bool
-    tree_class: Any
+    tree_class: Optional[Callable[[str, List], Any]]
     parser: _ParserArgType
     lexer: _LexerArgType
     ambiguity: 'Literal["auto", "resolve", "explicit", "forest"]'
@@ -70,11 +67,12 @@ class LarkOptions(Serialize):
     priority: 'Optional[Literal["auto", "normal", "invert"]]'
     lexer_callbacks: Dict[str, Callable[[Token], Token]]
     use_bytes: bool
+    ordered_sets: bool
     edit_terminals: Optional[Callable[[TerminalDef], TerminalDef]]
     import_paths: 'List[Union[str, Callable[[Union[None, str, PackageResource], str], Tuple[str, str]]]]'
     source_path: Optional[str]
 
-    OPTIONS_DOC = """
+    OPTIONS_DOC = r"""
     **===  General Options  ===**
 
     start
@@ -141,6 +139,8 @@ class LarkOptions(Serialize):
             Dictionary of callbacks for the lexer. May alter tokens during lexing. Use with caution.
     use_bytes
             Accept an input of type ``bytes`` instead of ``str``.
+    ordered_sets
+            Should Earley use ordered-sets to achieve stable output (~10% slower than regular sets. Default: True)
     edit_terminals
             A callback for editing the terminals before parse.
     import_paths
@@ -179,6 +179,7 @@ class LarkOptions(Serialize):
         'edit_terminals': None,
         'g_regex_flags': 0,
         'use_bytes': False,
+        'ordered_sets': True,
         'import_paths': [],
         'source_path': None,
         '_plugins': {},
@@ -299,7 +300,7 @@ class Lark(Serialize):
         if isinstance(grammar, str):
             self.source_grammar = grammar
             if self.options.use_bytes:
-                if not isascii(grammar):
+                if not grammar.isascii():
                     raise ConfigurationError("Grammar must be ascii only, when use_bytes=True")
 
             if self.options.cache:
@@ -494,6 +495,8 @@ class Lark(Serialize):
 
         Useful for caching and multiprocessing.
         """
+        if self.options.parser != 'lalr':
+            raise NotImplementedError("Lark.save() is only implemented for the LALR(1) parser.")
         data, m = self.memo_serialize([TerminalDef, Rule])
         if exclude_options:
             data["options"] = {n: v for n, v in data["options"].items() if n not in exclude_options}

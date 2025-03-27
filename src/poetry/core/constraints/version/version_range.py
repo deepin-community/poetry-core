@@ -64,7 +64,11 @@ class VersionRange(VersionRangeConstraint):
 
             assert _this is not None
 
-            if not _this.is_postrelease() and _other.is_postrelease():
+            if (
+                not self._include_min
+                and not _this.is_postrelease()
+                and _other.is_postrelease()
+            ):
                 # The exclusive ordered comparison >V MUST NOT allow a post-release
                 # of the given version unless V itself is a post release.
                 # https://peps.python.org/pep-0440/#exclusive-ordered-comparison

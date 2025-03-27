@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from poetry.core.pyproject.exceptions import PyProjectException
+from poetry.core.pyproject.exceptions import PyProjectError
 from poetry.core.pyproject.toml import PyProjectTOML
 from poetry.core.utils._compat import tomllib
 
@@ -22,7 +22,37 @@ def test_pyproject_toml_no_poetry_config(pyproject_toml: Path) -> None:
 
     assert not pyproject.is_poetry_project()
 
-    with pytest.raises(PyProjectException) as excval:
+    with pytest.raises(PyProjectError) as excval:
+        _ = pyproject.poetry_config
+
+    assert f"[tool.poetry] section not found in {pyproject_toml.as_posix()}" in str(
+        excval.value
+    )
+
+
+def test_pyproject_toml_no_poetry_config_but_project_section(
+    pyproject_toml: Path, project_section: str
+) -> None:
+    pyproject = PyProjectTOML(pyproject_toml)
+
+    assert pyproject.is_poetry_project()
+
+    with pytest.raises(PyProjectError) as excval:
+        _ = pyproject.poetry_config
+
+    assert f"[tool.poetry] section not found in {pyproject_toml.as_posix()}" in str(
+        excval.value
+    )
+
+
+def test_pyproject_toml_no_poetry_config_but_project_section_but_dynamic(
+    pyproject_toml: Path, project_section_dynamic: str
+) -> None:
+    pyproject = PyProjectTOML(pyproject_toml)
+
+    assert not pyproject.is_poetry_project()
+
+    with pytest.raises(PyProjectError) as excval:
         _ = pyproject.poetry_config
 
     assert f"[tool.poetry] section not found in {pyproject_toml.as_posix()}" in str(
@@ -72,3 +102,21 @@ def test_pyproject_toml_non_existent(pyproject_toml: Path) -> None:
     assert pyproject.data == {}
     assert build_system.requires == ["poetry-core"]
     assert build_system.build_backend == "poetry.core.masonry.api"
+
+
+def test_unparseable_pyproject_toml() -> None:
+    pyproject_toml = (
+        Path(__file__).parent.parent
+        / "fixtures"
+        / "project_duplicate_dependency"
+        / "pyproject.toml"
+    )
+
+    with pytest.raises(PyProjectError) as excval:
+        _ = PyProjectTOML(pyproject_toml).build_system
+
+    assert (
+        f"{pyproject_toml.as_posix()} is not a valid TOML file.\n"
+        "TOMLDecodeError: Cannot overwrite a value (at line 7, column 16)\n"
+        "This is often caused by a duplicate entry"
+    ) in str(excval.value)

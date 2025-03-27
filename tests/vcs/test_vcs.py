@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 
 from pathlib import Path
@@ -9,15 +10,33 @@ from typing import Any
 import pytest
 
 from poetry.core.utils._compat import WINDOWS
+from poetry.core.vcs import get_vcs
 from poetry.core.vcs.git import Git
-from poetry.core.vcs.git import GitError
 from poetry.core.vcs.git import GitUrl
 from poetry.core.vcs.git import ParsedUrl
 from poetry.core.vcs.git import _reset_executable
+from poetry.core.vcs.git import executable
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pytest_mock import MockerFixture
+
+
+@pytest.fixture
+def reset_git() -> Iterator[None]:
+    _reset_executable()
+    try:
+        yield
+    finally:
+        _reset_executable()
+
+
+@pytest.fixture(autouse=True)
+def with_mocked_get_vcs() -> None:
+    # disabled global mocking of get_vcs
+    pass
 
 
 @pytest.mark.parametrize(
@@ -245,7 +264,7 @@ def test_normalize_url(url: str, normalized: GitUrl) -> None:
         ),
         (
             "git@github.com:org/repo",
-            ParsedUrl(None, "github.com", ":org/repo", "git", None, "repo", None),
+            ParsedUrl("ssh", "github.com", ":org/repo", "git", None, "repo", None),
         ),
         (
             "git+https://github.com/sdispater/pendulum",
@@ -254,6 +273,42 @@ def test_normalize_url(url: str, normalized: GitUrl) -> None:
                 "github.com",
                 "/sdispater/pendulum",
                 None,
+                None,
+                "pendulum",
+                None,
+            ),
+        ),
+        (
+            "git+https://username:@github.com/sdispater/pendulum",
+            ParsedUrl(
+                "https",
+                "github.com",
+                "/sdispater/pendulum",
+                "username:",
+                None,
+                "pendulum",
+                None,
+            ),
+        ),
+        (
+            "git+https://username:password@github.com/sdispater/pendulum",
+            ParsedUrl(
+                "https",
+                "github.com",
+                "/sdispater/pendulum",
+                "username:password",
+                None,
+                "pendulum",
+                None,
+            ),
+        ),
+        (
+            "git+https://username+suffix:password@github.com/sdispater/pendulum",
+            ParsedUrl(
+                "https",
+                "github.com",
+                "/sdispater/pendulum",
+                "username+suffix:password",
                 None,
                 "pendulum",
                 None,
@@ -321,6 +376,18 @@ def test_normalize_url(url: str, normalized: GitUrl) -> None:
                 "ssh",
                 "git.example.com",
                 ":sdispater/project/my_repo.git",
+                "git",
+                None,
+                "my_repo",
+                None,
+            ),
+        ),
+        (
+            "git+ssh://git@git.example.com:sdispater/project/+git/my_repo.git",
+            ParsedUrl(
+                "ssh",
+                "git.example.com",
+                ":sdispater/project/+git/my_repo.git",
                 "git",
                 None,
                 "my_repo",
@@ -414,21 +481,6 @@ def test_parse_url_should_fail() -> None:
         ParsedUrl.parse(url)
 
 
-def test_git_clone_raises_error_on_invalid_repository() -> None:
-    with pytest.raises(GitError):
-        Git().clone("-u./payload", Path("foo"))
-
-
-def test_git_checkout_raises_error_on_invalid_repository() -> None:
-    with pytest.raises(GitError):
-        Git().checkout("-u./payload")
-
-
-def test_git_rev_parse_raises_error_on_invalid_repository() -> None:
-    with pytest.raises(GitError):
-        Git().rev_parse("-u./payload")
-
-
 @pytest.mark.skipif(
     not WINDOWS,
     reason=(
@@ -436,16 +488,11 @@ def test_git_rev_parse_raises_error_on_invalid_repository() -> None:
         " reasons"
     ),
 )
-def test_ensure_absolute_path_to_git(mocker: MockerFixture) -> None:
-    _reset_executable()
-
+def test_ensure_absolute_path_to_git(reset_git: None, mocker: MockerFixture) -> None:
     def checkout_output(cmd: list[str], *args: Any, **kwargs: Any) -> str | bytes:
         if Path(cmd[0]).name == "where.exe":
             return "\n".join(
-                [
-                    str(Path.cwd().joinpath("git.exe")),
-                    "C:\\Git\\cmd\\git.exe",
-                ]
+                [str(Path.cwd().joinpath("git.exe")), r"C:\Git\cmd\git.exe"]
             )
 
         return b""
@@ -454,25 +501,64 @@ def test_ensure_absolute_path_to_git(mocker: MockerFixture) -> None:
 
     Git().run("config")
 
-    assert mock.call_args_list[-1][0][0] == [
-        "C:\\Git\\cmd\\git.exe",
-        "config",
-    ]
+    assert mock.call_args_list[-1][0][0] == [r"C:\Git\cmd\git.exe", "config"]
 
-
-@pytest.mark.skipif(
-    not WINDOWS,
-    reason=(
-        "Retrieving the complete path to git is only necessary on Windows, for security"
-        " reasons"
-    ),
-)
-def test_ensure_existing_git_executable_is_found(mocker: MockerFixture) -> None:
     mock = mocker.patch.object(subprocess, "check_output", return_value=b"")
 
     Git().run("config")
 
-    cmd = Path(mock.call_args_list[-1][0][0][0])
+    assert mock.call_args_list[-1][0][0] == [r"C:\Git\cmd\git.exe", "config"]
 
-    assert cmd.is_absolute()
-    assert cmd.name == "git.exe"
+
+def test_get_vcs_encoding(tmp_path: Path) -> None:
+    repo_path = tmp_path / "répö"
+    repo_path.mkdir()
+    assert repo_path.exists()
+    assert subprocess.check_call([executable(), "init"], cwd=repo_path) == 0
+    vcs = get_vcs(repo_path)
+    assert vcs is not None
+    assert vcs._work_dir is not None
+    assert vcs._work_dir.exists()
+    assert vcs._work_dir == repo_path
+
+
+def test_get_vc_subdir(tmp_path: Path) -> None:
+    repo_path = tmp_path / "répö"
+    repo_path.mkdir()
+    assert repo_path.exists()
+    assert subprocess.check_call([executable(), "init"], cwd=repo_path) == 0
+    subdir = repo_path / "subdir"
+    subdir.mkdir()
+    vcs = get_vcs(subdir)
+    assert vcs is not None
+    assert vcs._work_dir is not None
+    assert vcs._work_dir.exists()
+    assert vcs._work_dir == repo_path
+
+
+def test_get_vcs_no_repo(tmp_path: Path, mocker: MockerFixture) -> None:
+    repo_path = tmp_path / "répö"
+    repo_path.mkdir()
+    assert repo_path.exists()
+    assert subprocess.check_call([executable(), "init"], cwd=repo_path) == 0
+
+    # This makes sure git fails to find the git directory even if one
+    # exists at some higher level in the filesystem
+    mocker.patch.dict(os.environ, {"GIT_DIR": os.devnull})
+
+    vcs = get_vcs(repo_path)
+    assert vcs is None
+
+
+def test_get_vcs_ignored_subdir(tmp_path: Path) -> None:
+    # See https://github.com/python-poetry/poetry-core/pull/611
+    repo_path = tmp_path / "répö"
+    repo_path.mkdir()
+    assert repo_path.exists()
+    assert subprocess.check_call([executable(), "init"], cwd=repo_path) == 0
+    (repo_path / ".gitignore").write_text("/ignored", encoding="utf-8")
+    subdir = repo_path / "ignored"
+    subdir.mkdir()
+
+    vcs = get_vcs(subdir)
+    assert vcs is None

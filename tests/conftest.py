@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Callable
-from typing import Iterator
 
 import pytest
 import virtualenv
@@ -16,8 +16,11 @@ from poetry.core.utils._compat import WINDOWS
 
 
 if TYPE_CHECKING:
-    from _pytest.config import Config
-    from _pytest.config.argparsing import Parser
+    from collections.abc import Iterator
+
+    from pytest import Config
+    from pytest import Parser
+    from pytest_mock import MockerFixture
 
 
 def pytest_addoption(parser: Parser) -> None:
@@ -108,3 +111,20 @@ def python(venv: Path) -> str:
 @pytest.fixture()
 def f() -> Factory:
     return Factory()
+
+
+@pytest.fixture(autouse=True)
+def with_mocked_get_vcs(mocker: MockerFixture) -> None:
+    from poetry.core.vcs.git import Git
+
+    mocker.patch(
+        "poetry.core.vcs.git.Git.run", return_value="This is a mocked Git.run() output."
+    )
+    mocker.patch("poetry.core.vcs.get_vcs", return_value=Git())
+
+
+@pytest.fixture(autouse=True)
+def clear_env_source_date_epoch() -> None:
+    """Clear SOURCE_DATE_EPOCH from environment to avoid non-deterministic failures"""
+    if "SOURCE_DATE_EPOCH" in os.environ:
+        del os.environ["SOURCE_DATE_EPOCH"]

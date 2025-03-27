@@ -28,11 +28,13 @@ packages = [
     { include = "tests", format = "sdist" },
     { include = "for_wheel_only", format = ["wheel"] },
     { include = "src_package", from = "src"},
+    { include = "from_to", from = "etc", "to" = "target_from_to"},
+    { include = "my_module_to.py", "to" = "target_module"},
 ]
 
 include = [
-    "extra_dir/vcs_excluded.txt",
-    "notes.txt"
+    { path = "extra_dir/vcs_excluded.py", format = ["sdist", "wheel"] },
+    "notes.txt",  # default is sdist only
 ]
 
 
@@ -44,7 +46,7 @@ cachy = { version = "^0.2.0", extras = ["msgpack"] }
 
 pendulum = { version = "^1.4", optional = true }
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 pytest = "~3.4"
 
 [tool.poetry.extras]

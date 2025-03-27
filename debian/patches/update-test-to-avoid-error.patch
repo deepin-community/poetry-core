@@ -1,0 +1,76 @@
+Description: Remove SOURCE_DATE_EPOCH variable check
+ Set SOURCE_DATE_EPOCH variable to tests and remove check wether the variable
+ SOURCE_DATE_EPOCH is an environment variable.
+Author: Emmanuel Arias
+Forwarded: no
+Last-Update: 2025-01-19
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/tests/masonry/builders/test_wheel.py
++++ b/tests/masonry/builders/test_wheel.py
+@@ -499,8 +499,9 @@
+ 
+ @pytest.mark.parametrize("log_level", [logging.INFO, logging.DEBUG])
+ def test_dist_info_date_time_default_value(
+-    caplog: LogCaptureFixture, log_level: int
++    caplog: LogCaptureFixture, log_level: int, monkeypatch: MonkeyPatch
+ ) -> None:
++    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1451606400")
+     caplog.set_level(log_level)
+     module_path = fixtures_dir / "complete"
+     WheelBuilder.make(Factory().create_poetry(module_path))
+@@ -514,16 +515,6 @@
+             z.getinfo("my_package-1.2.3.dist-info/WHEEL").date_time == default_date_time
+         )
+ 
+-    source_data_epoch_message = (
+-        "SOURCE_DATE_EPOCH environment variable not set,"
+-        f" setting zipinfo date to default={default_date_time}"
+-    )
+-    if log_level == logging.DEBUG:
+-        assert source_data_epoch_message in caplog.messages
+-    else:
+-        assert source_data_epoch_message not in caplog.messages
+-
+-
+ def test_dist_info_date_time_value_from_envvar(monkeypatch: MonkeyPatch) -> None:
+     monkeypatch.setenv("SOURCE_DATE_EPOCH", "1727883000")
+     expected_date_time = (2024, 10, 2, 15, 30, 0)
+--- a/tests/masonry/builders/test_sdist.py
++++ b/tests/masonry/builders/test_sdist.py
+@@ -692,7 +692,8 @@
+         }
+ 
+ 
+-def test_sdist_mtime_zero() -> None:
++def test_sdist_mtime_zero(monkeypatch: MonkeyPatch) -> None:
++    monkeypatch.setenv("SOURCE_DATE_EPOCH", "0")
+     poetry = Factory().create_poetry(project("module1"))
+ 
+     builder = SdistBuilder(poetry)
+@@ -724,7 +725,9 @@
+ 
+ 
+ @pytest.mark.parametrize("log_level", [logging.INFO, logging.DEBUG])
+-def test_sdist_members_mtime_default(caplog: LogCaptureFixture, log_level: int) -> None:
++def test_sdist_members_mtime_default(caplog: LogCaptureFixture, log_level: int,
++                                     monkeypatch: MonkeyPatch) -> None:
++    monkeypatch.setenv("SOURCE_DATE_EPOCH", "0")
+     caplog.set_level(log_level)
+     poetry = Factory().create_poetry(project("module1"))
+ 
+@@ -739,14 +742,6 @@
+         for tarinfo in tar.getmembers():
+             assert tarinfo.mtime == 0
+ 
+-    source_data_epoch_message = (
+-        "SOURCE_DATE_EPOCH environment variable is not set, using mtime=0"
+-    )
+-    if log_level == logging.DEBUG:
+-        assert source_data_epoch_message in caplog.messages
+-    else:
+-        assert source_data_epoch_message not in caplog.messages
+-
+ 
+ def test_sdist_mtime_set_from_envvar(monkeypatch: MonkeyPatch) -> None:
+     monkeypatch.setenv("SOURCE_DATE_EPOCH", "1727883000")

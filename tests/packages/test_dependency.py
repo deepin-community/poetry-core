@@ -6,9 +6,11 @@ from packaging.utils import canonicalize_name
 
 from poetry.core.constraints.version.exceptions import ParseConstraintError
 from poetry.core.packages.dependency import Dependency
-from poetry.core.version.markers import InvalidMarker
+from poetry.core.packages.directory_dependency import DirectoryDependency
+from poetry.core.packages.file_dependency import FileDependency
+from poetry.core.version.markers import InvalidMarkerError
 from poetry.core.version.markers import parse_marker
-from poetry.core.version.requirements import InvalidRequirement
+from poetry.core.version.requirements import InvalidRequirementError
 
 
 @pytest.mark.parametrize(
@@ -24,10 +26,21 @@ from poetry.core.version.requirements import InvalidRequirement
         "^1.0.0-1",
     ],
 )
-@pytest.mark.parametrize("allows_prereleases", [False, True])
+@pytest.mark.parametrize("allows_prereleases", [None, False, True])
 def test_allows_prerelease(constraint: str, allows_prereleases: bool) -> None:
     dependency = Dependency("A", constraint, allows_prereleases=allows_prereleases)
     assert dependency.allows_prereleases() == allows_prereleases
+
+
+def test_python_versions_are_made_precise() -> None:
+    dependency = Dependency("Django", "^1.23")
+    dependency.python_versions = ">3.6,<=3.10"
+
+    assert (
+        str(dependency.marker)
+        == 'python_full_version > "3.6.0" and python_full_version <= "3.10.0"'
+    )
+    assert str(dependency.python_constraint) == ">3.6,<=3.10"
 
 
 def test_to_pep_508() -> None:
@@ -41,9 +54,8 @@ def test_to_pep_508() -> None:
 
     result = dependency.to_pep_508()
     assert (
-        result
-        == "Django (>=1.23,<2.0) ; "
-        'python_version >= "2.7" and python_version < "2.8" '
+        result == "Django (>=1.23,<2.0) ; "
+        'python_version == "2.7" '
         'or python_version >= "3.6" and python_version < "4.0"'
     )
 
@@ -57,7 +69,7 @@ def test_to_pep_508_wilcard() -> None:
 
 def test_to_pep_508_in_extras() -> None:
     dependency = Dependency("Django", "^1.23")
-    dependency.in_extras.append(canonicalize_name("foo"))
+    dependency._in_extras = [canonicalize_name("foo")]
 
     result = dependency.to_pep_508()
     assert result == 'Django (>=1.23,<2.0) ; extra == "foo"'
@@ -65,7 +77,7 @@ def test_to_pep_508_in_extras() -> None:
     result = dependency.to_pep_508(with_extras=False)
     assert result == "Django (>=1.23,<2.0)"
 
-    dependency.in_extras.append(canonicalize_name("bar"))
+    dependency._in_extras = [canonicalize_name("foo"), canonicalize_name("bar")]
 
     result = dependency.to_pep_508()
     assert result == 'Django (>=1.23,<2.0) ; extra == "foo" or extra == "bar"'
@@ -74,10 +86,9 @@ def test_to_pep_508_in_extras() -> None:
 
     result = dependency.to_pep_508()
     assert (
-        result
-        == "Django (>=1.23,<2.0) ; "
+        result == "Django (>=1.23,<2.0) ; "
         "("
-        'python_version >= "2.7" and python_version < "2.8" '
+        'python_version == "2.7" '
         'or python_version >= "3.6" and python_version < "4.0"'
         ") "
         'and (extra == "foo" or extra == "bar")'
@@ -85,9 +96,8 @@ def test_to_pep_508_in_extras() -> None:
 
     result = dependency.to_pep_508(with_extras=False)
     assert (
-        result
-        == "Django (>=1.23,<2.0) ; "
-        'python_version >= "2.7" and python_version < "2.8" '
+        result == "Django (>=1.23,<2.0) ; "
+        'python_version == "2.7" '
         'or python_version >= "3.6" and python_version < "4.0"'
     )
 
@@ -195,7 +205,7 @@ def test_to_pep_508_combination() -> None:
     ],
 )
 def test_to_pep_508_with_invalid_marker(requirement: str) -> None:
-    with pytest.raises(InvalidMarker):
+    with pytest.raises(InvalidMarkerError):
         _ = Dependency.create_from_pep_508(requirement)
 
 
@@ -206,8 +216,29 @@ def test_to_pep_508_with_invalid_marker(requirement: str) -> None:
     ],
 )
 def test_to_pep_508_with_invalid_requirement(requirement: str) -> None:
-    with pytest.raises(InvalidRequirement):
+    with pytest.raises(InvalidRequirementError):
         _ = Dependency.create_from_pep_508(requirement)
+
+
+@pytest.mark.parametrize(
+    ("requirement", "dependency_type"),
+    [
+        (
+            "eflips-depot @ git@github.com/mpm-tu-berlin/eflips-depot.git@feature/allow-only-oppo-charging",
+            DirectoryDependency,
+        ),
+        (
+            "eflips-depot @ git@github.com/mpm-tu-berlin/eflips-depot.git@feature/allow-only-oppo-charging.whl",
+            FileDependency,
+        ),
+    ],
+)
+def test_to_pep_508_with_invalid_path_requirement(
+    requirement: str, dependency_type: type[FileDependency | DirectoryDependency]
+) -> None:
+    dependency = Dependency.create_from_pep_508(requirement)
+    assert isinstance(dependency, dependency_type)
+    assert dependency.source_url
 
 
 def test_complete_name() -> None:
@@ -303,7 +334,6 @@ def test_with_constraint() -> None:
         'python_version >= "3.7" and python_version < "4.0"'
     )
     dependency.python_versions = "^3.6"
-    dependency.transitive_python_versions = "^3.7"
 
     new = dependency.with_constraint("^1.2.6")
 
@@ -316,7 +346,6 @@ def test_with_constraint() -> None:
     assert new.marker == dependency.marker
     assert new.transitive_marker == dependency.transitive_marker
     assert new.python_constraint == dependency.python_constraint
-    assert new.transitive_python_constraint == dependency.transitive_python_constraint
 
 
 @pytest.mark.parametrize(
@@ -394,7 +423,6 @@ def test_eq(dependency1: Dependency, dependency2: Dependency, expected: bool) ->
     [
         ("constraint", "2.0"),
         ("python_versions", "<3.8"),
-        ("transitive_python_versions", "<3.8"),
         ("marker", "sys_platform == 'linux'"),
         ("transitive_marker", "sys_platform == 'linux'"),
     ],
@@ -402,8 +430,9 @@ def test_eq(dependency1: Dependency, dependency2: Dependency, expected: bool) ->
 def test_mutable_attributes_not_in_hash(attr_name: str, value: str) -> None:
     dependency = Dependency("foo", "^1.2.3")
     ref_hash = hash(dependency)
-
     ref_value = getattr(dependency, attr_name)
+
     setattr(dependency, attr_name, value)
+
     assert value != ref_value
     assert hash(dependency) == ref_hash

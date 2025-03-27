@@ -2,7 +2,7 @@ import unicodedata
 import os
 from itertools import product
 from collections import deque
-from typing import Callable, Iterator, List, Optional, Tuple, Type, TypeVar, Union, Dict, Any, Sequence, Iterable
+from typing import Callable, Iterator, List, Optional, Tuple, Type, TypeVar, Union, Dict, Any, Sequence, Iterable, AbstractSet
 
 ###{standalone
 import sys, re
@@ -68,7 +68,7 @@ class Serialize:
         res = {f: _serialize(getattr(self, f), memo) for f in fields}
         res['__type__'] = type(self).__name__
         if hasattr(self, '_serialize'):
-            self._serialize(res, memo)  # type: ignore[attr-defined]
+            self._serialize(res, memo)
         return res
 
     @classmethod
@@ -89,7 +89,7 @@ class Serialize:
                 raise KeyError("Cannot find key for class", cls, e)
 
         if hasattr(inst, '_deserialize'):
-            inst._deserialize()  # type: ignore[attr-defined]
+            inst._deserialize()
 
         return inst
 
@@ -141,7 +141,7 @@ def get_regexp_width(expr: str) -> Union[Tuple[int, int], List[int]]:
         regexp_final = expr
     try:
         # Fixed in next version (past 0.960) of typeshed
-        return [int(x) for x in sre_parse.parse(regexp_final).getwidth()]   # type: ignore[attr-defined]
+        return [int(x) for x in sre_parse.parse(regexp_final).getwidth()]
     except sre_constants.error:
         if not _has_regex:
             raise ValueError(expr)
@@ -149,11 +149,14 @@ def get_regexp_width(expr: str) -> Union[Tuple[int, int], List[int]]:
             # sre_parse does not support the new features in regex. To not completely fail in that case,
             # we manually test for the most important info (whether the empty string is matched)
             c = regex.compile(regexp_final)
+            # Python 3.11.7 introducded sre_parse.MAXWIDTH that is used instead of MAXREPEAT
+            # See lark-parser/lark#1376 and python/cpython#109859
+            MAXWIDTH = getattr(sre_parse, "MAXWIDTH", sre_constants.MAXREPEAT)
             if c.match('') is None:
                 # MAXREPEAT is a none pickable subclass of int, therefore needs to be converted to enable caching
-                return 1, int(sre_constants.MAXREPEAT)
+                return 1, int(MAXWIDTH)
             else:
-                return 0, int(sre_constants.MAXREPEAT)
+                return 0, int(MAXWIDTH)
 
 ###}
 
@@ -181,15 +184,11 @@ def is_id_start(s: str) -> bool:
     return _test_unicode_category(s, _ID_START)
 
 
-def dedup_list(l: List[T]) -> List[T]:
+def dedup_list(l: Sequence[T]) -> List[T]:
     """Given a list (l) will removing duplicates from the list,
        preserving the original order of the list. Assumes that
        the list entries are hashable."""
-    dedup = set()
-    # This returns None, but that's expected
-    return [x for x in l if not (x in dedup or dedup.add(x))]  # type: ignore[func-returns-value]
-    # 2x faster (ordered in PyPy and CPython 3.6+, guaranteed to be ordered in Python 3.7+)
-    # return list(dict.fromkeys(l))
+    return list(dict.fromkeys(l))
 
 
 class Enumerator(Serialize):
@@ -247,31 +246,18 @@ class FS:
             return open(name, mode, **kwargs)
 
 
-
-def isascii(s: str) -> bool:
-    """ str.isascii only exists in python3.7+ """
-    if sys.version_info >= (3, 7):
-        return s.isascii()
-    else:
-        try:
-            s.encode('ascii')
-            return True
-        except (UnicodeDecodeError, UnicodeEncodeError):
-            return False
-
-
 class fzset(frozenset):
     def __repr__(self):
         return '{%s}' % ', '.join(map(repr, self))
 
 
-def classify_bool(seq: Sequence, pred: Callable) -> Any:
+def classify_bool(seq: Iterable, pred: Callable) -> Any:
     false_elems = []
     true_elems = [elem for elem in seq if pred(elem) or false_elems.append(elem)]  # type: ignore[func-returns-value]
     return true_elems, false_elems
 
 
-def bfs(initial: Sequence, expand: Callable) -> Iterator:
+def bfs(initial: Iterable, expand: Callable) -> Iterator:
     open_q = deque(list(initial))
     visited = set(open_q)
     while open_q:
@@ -328,3 +314,33 @@ def small_factors(n: int, max_factor: int) -> List[Tuple[int, int]]:
         if a + b <= max_factor:
             return small_factors(r, max_factor) + [(a, b)]
     assert False, "Failed to factorize %s" % n
+
+
+class OrderedSet(AbstractSet[T]):
+    """A minimal OrderedSet implementation, using a dictionary.
+
+    (relies on the dictionary being ordered)
+    """
+    def __init__(self, items: Iterable[T] =()):
+        self.d = dict.fromkeys(items)
+
+    def __contains__(self, item: Any) -> bool:
+        return item in self.d
+
+    def add(self, item: T):
+        self.d[item] = None
+
+    def __iter__(self) -> Iterator[T]:
+        return iter(self.d)
+
+    def remove(self, item: T):
+        del self.d[item]
+
+    def __bool__(self):
+        return bool(self.d)
+
+    def __len__(self) -> int:
+        return len(self.d)
+
+    def __repr__(self):
+        return f"{type(self).__name__}({', '.join(map(repr,self))})"
